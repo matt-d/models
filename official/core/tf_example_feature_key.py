@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ class TfExampleFeatureKeyBase:
         with a trailing slash '/'.
     """
     if prefix:
-      for field in dataclasses.fields(self):
+      for field in dataclasses.fields(self):  # pytype: disable=wrong-arg-types  # re-none
         key_name = field.name
         key_value = getattr(self, key_name)
         setattr(self, key_name, f'{prefix}/{key_value}')

@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import tensorflow as tf
 from official.core import config_definitions as cfg
 from official.core import export_base
 from official.projects.yolo.configs.yolo import YoloTask
+from official.projects.yolo.configs.yolov7 import YoloV7Task
 from official.projects.yolo.modeling import factory as yolo_factory
 from official.projects.yolo.modeling.backbones import darknet  # pylint: disable=unused-import
 from official.projects.yolo.modeling.decoders import yolo_decoder  # pylint: disable=unused-import
@@ -47,13 +48,13 @@ class ExportModule(export_base.ExportModule):
     Args:
       params: A dataclass for parameters to the module.
       model: A tf.keras.Model instance to be exported.
-      input_signature: tf.TensorSpec, e.g.
-        tf.TensorSpec(shape=[None, 224, 224, 3], dtype=tf.uint8)
+      input_signature: tf.TensorSpec, e.g. tf.TensorSpec(shape=[None, 224, 224,
+        3], dtype=tf.uint8)
       preprocessor: An optional callable to preprocess the inputs.
       inference_step: An optional callable to forward-pass the model.
       postprocessor: An optional callable to postprocess the model outputs.
-      eval_postprocessor: An optional callable to postprocess model outputs
-      used for model evaluation.
+      eval_postprocessor: An optional callable to postprocess model outputs used
+        for model evaluation.
     """
     super().__init__(
         params,
@@ -106,10 +107,11 @@ def create_classification_export_module(
     input_type: str,
     batch_size: int,
     input_image_size: List[int],
-    num_channels: int = 3) -> ExportModule:
+    num_channels: int = 3,
+    input_name: Optional[str] = None) -> ExportModule:
   """Creates classification export module."""
   input_signature = export_utils.get_image_input_signatures(
-      input_type, batch_size, input_image_size, num_channels)
+      input_type, batch_size, input_image_size, num_channels, input_name)
   input_specs = tf.keras.layers.InputSpec(shape=[batch_size] +
                                           input_image_size + [num_channels])
 
@@ -155,27 +157,39 @@ def create_yolo_export_module(
     input_type: str,
     batch_size: int,
     input_image_size: List[int],
-    num_channels: int = 3) -> ExportModule:
+    num_channels: int = 3,
+    input_name: Optional[str] = None) -> ExportModule:
   """Creates YOLO export module."""
   input_signature = export_utils.get_image_input_signatures(
-      input_type, batch_size, input_image_size, num_channels)
+      input_type, batch_size, input_image_size, num_channels, input_name)
   input_specs = tf.keras.layers.InputSpec(shape=[batch_size] +
                                           input_image_size + [num_channels])
-  model, _ = yolo_factory.build_yolo(
-      input_specs=input_specs,
-      model_config=params.task.model,
-      l2_regularization=None)
+  if isinstance(params.task, YoloTask):
+    model, _ = yolo_factory.build_yolo(
+        input_specs=input_specs,
+        model_config=params.task.model,
+        l2_regularization=None)
+  elif isinstance(params.task, YoloV7Task):
+    model = yolo_factory.build_yolov7(
+        input_specs=input_specs,
+        model_config=params.task.model,
+        l2_regularization=None)
 
   def preprocess_fn(inputs):
     image_tensor = export_utils.parse_image(inputs, input_type,
                                             input_image_size, num_channels)
-    # If input_type is `tflite`, do not apply image preprocessing.
+
+    def normalize_image_fn(inputs):
+      image = tf.cast(inputs, dtype=tf.float32)
+      return image / 255.0
+
+    # If input_type is `tflite`, do not apply image preprocessing. Only apply
+    # normalization.
     if input_type == 'tflite':
-      return image_tensor
+      return normalize_image_fn(image_tensor), None
 
     def preprocess_image_fn(inputs):
-      image = tf.cast(inputs, dtype=tf.float32)
-      image = image / 255.
+      image = normalize_image_fn(inputs)
       (image, image_info) = yolo_model_fn.letterbox(
           image,
           input_image_size,
@@ -198,12 +212,14 @@ def create_yolo_export_module(
 
   def inference_steps(inputs, model):
     images, image_info = inputs
-    detection = model(images, training=False)
-    detection['bbox'] = yolo_model_fn.undo_info(
-        detection['bbox'],
-        detection['num_detections'],
-        image_info,
-        expand=False)
+    detection = model.call(images, training=False)
+    if input_type != 'tflite':
+      detection['bbox'] = yolo_model_fn.undo_info(
+          detection['bbox'],
+          detection['num_detections'],
+          image_info,
+          expand=False,
+      )
 
     final_outputs = {
         'detection_boxes': detection['bbox'],
@@ -228,17 +244,20 @@ def get_export_module(params: cfg.ExperimentConfig,
                       input_type: str,
                       batch_size: Optional[int],
                       input_image_size: List[int],
-                      num_channels: int = 3) -> ExportModule:
+                      num_channels: int = 3,
+                      input_name: Optional[str] = None) -> ExportModule:
   """Factory for export modules."""
   if isinstance(params.task,
                 configs.image_classification.ImageClassificationTask):
     export_module = create_classification_export_module(params, input_type,
                                                         batch_size,
                                                         input_image_size,
-                                                        num_channels)
-  elif isinstance(params.task, YoloTask):
+                                                        num_channels,
+                                                        input_name)
+  elif isinstance(params.task, (YoloTask, YoloV7Task)):
     export_module = create_yolo_export_module(params, input_type, batch_size,
-                                              input_image_size, num_channels)
+                                              input_image_size, num_channels,
+                                              input_name)
   else:
     raise ValueError('Export module not implemented for {} task.'.format(
         type(params.task)))

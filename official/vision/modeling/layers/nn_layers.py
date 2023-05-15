@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """Contains common building blocks for neural networks."""
+
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 from absl import logging
 import tensorflow as tf
-import tensorflow_addons as tfa
 
 from official.modeling import tf_utils
 from official.vision.ops import spatial_transform_ops
@@ -350,7 +350,7 @@ class PanopticFPNFusion(tf.keras.Model):
         'kernel_regularizer': kernel_regularizer,
         'bias_regularizer': bias_regularizer,
     }
-    norm = tfa.layers.GroupNormalization
+    norm = tf.keras.layers.GroupNormalization
     conv2d = tf.keras.layers.Conv2D
     activation_fn = tf_utils.get_activation(activation)
     if tf.keras.backend.image_data_format() == 'channels_last':
@@ -1135,10 +1135,7 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
     self._pool_kernel_size = pool_kernel_size
     self._use_depthwise_convolution = use_depthwise_convolution
     self._activation_fn = tf_utils.get_activation(activation)
-    if self._use_sync_bn:
-      self._bn_op = tf.keras.layers.experimental.SyncBatchNormalization
-    else:
-      self._bn_op = tf.keras.layers.BatchNormalization
+    self._bn_op = tf.keras.layers.BatchNormalization
 
     if tf.keras.backend.image_data_format() == 'channels_last':
       self._bn_axis = -1
@@ -1161,7 +1158,8 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
     norm1 = self._bn_op(
         axis=self._bn_axis,
         momentum=self._batchnorm_momentum,
-        epsilon=self._batchnorm_epsilon)
+        epsilon=self._batchnorm_epsilon,
+        synchronized=self._use_sync_bn)
 
     self.aspp_layers.append([conv1, norm1])
 
@@ -1195,7 +1193,8 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
       norm_dilation = self._bn_op(
           axis=self._bn_axis,
           momentum=self._batchnorm_momentum,
-          epsilon=self._batchnorm_epsilon)
+          epsilon=self._batchnorm_epsilon,
+          synchronized=self._use_sync_bn)
 
       self.aspp_layers.append(conv_dilation + [norm_dilation])
 
@@ -1216,7 +1215,8 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
     norm2 = self._bn_op(
         axis=self._bn_axis,
         momentum=self._batchnorm_momentum,
-        epsilon=self._batchnorm_epsilon)
+        epsilon=self._batchnorm_epsilon,
+        synchronized=self._use_sync_bn)
 
     self.aspp_layers.append(pooling + [conv2, norm2])
 
@@ -1234,7 +1234,8 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
         self._bn_op(
             axis=self._bn_axis,
             momentum=self._batchnorm_momentum,
-            epsilon=self._batchnorm_epsilon)
+            epsilon=self._batchnorm_epsilon,
+            synchronized=self._use_sync_bn)
     ]
     self._dropout_layer = tf.keras.layers.Dropout(rate=self._dropout)
     self._concat_layer = tf.keras.layers.Concatenate(axis=-1)
@@ -1279,3 +1280,133 @@ class SpatialPyramidPooling(tf.keras.layers.Layer):
     }
     base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
+
+
+@tf.keras.utils.register_keras_serializable(package='Vision')
+class MultiHeadAttention(tf.keras.layers.MultiHeadAttention):
+  """MultiHeadAttention layer.
+
+  This is an implementation of multi-headed attention as described in the paper
+  "Attention is all you Need" (Vaswani et al., 2017).
+  """
+
+  def __init__(
+      self,
+      *args,
+      partition_dims: Optional[Tuple[int, int, int, int]] = None,
+      max_inference_parallelism: Optional[int] = None,
+      **kwargs,
+  ):
+    """Initializes MultiHeadAttention.
+
+    Args:
+      *args: Positional arguments passed to super().__init__.
+      partition_dims: Spatial partition dimensions.
+      max_inference_parallelism: The number of examples to run in parallel
+        during inference. Set this limit to reduce the peak memory usage. If
+        None, use vectorized operations to run the whole batch in parallel.
+      **kwargs: Keyword arguments passed to super().__init__.
+    """
+    super().__init__(*args, **kwargs)
+    self._partition_dims = partition_dims
+    self._max_inference_parallelism = max_inference_parallelism
+
+  def get_config(self):
+    config = super().get_config()
+    config.update({
+        'partition_dims': self._partition_dims,
+        'max_inference_parallelism': self._max_inference_parallelism,
+    })
+    return config
+
+  def _compute_attention(
+      self,
+      query: tf.Tensor,
+      key: tf.Tensor,
+      value: tf.Tensor,
+      attention_mask: Optional[tf.Tensor] = None,
+      training: Optional[bool] = None,
+  ):
+    """Applies dot-product attention with query, key, value tensors.
+
+    Args:
+      query: Projected query `Tensor` of shape `(B, T, N, key_dim)`.
+      key: Projected key `Tensor` of shape `(B, S, N, key_dim)`.
+      value: Projected value `Tensor` of shape `(B, S, N, value_dim)`.
+      attention_mask: a boolean mask of shape `(B, T, S)`, that prevents
+        attention to certain positions. It is generally not needed if the
+        `query` and `value` (and/or `key`) are masked.
+      training: Python boolean indicating whether the layer should behave in
+        training mode (adding dropout) or in inference mode (doing nothing).
+
+    Returns:
+      attention_output: Multi-headed outputs of attention computation.
+      attention_scores: Multi-headed attention weights.
+    """
+    if self._partition_dims is not None:
+      strategy = tf.distribute.get_strategy()
+      # `query` = [B, T, N ,H]
+      query = strategy.experimental_split_to_logical_devices(
+          query, self._partition_dims)
+      key = strategy.experimental_split_to_logical_devices(
+          key, self._partition_dims)
+      value = strategy.experimental_split_to_logical_devices(
+          value, self._partition_dims)
+
+    batch_size = query.get_shape().as_list()[0]  # None if dynamic.
+
+    if (
+        training
+        or self._max_inference_parallelism is None
+        or self._max_inference_parallelism <= 0
+        or (
+            # If the whole batch is allowed to be run in parallel, use fully
+            # vectorized computation instead of tf.map_fn to make things more
+            # efficient.
+            batch_size is not None
+            and batch_size <= self._max_inference_parallelism
+        )
+    ):
+      return self._compute_attention_delegate(
+          query, key, value, attention_mask, training
+      )
+    else:
+      # Sequentialize the inference execution with limited parallelism.
+      def _compute_fn(x):
+        attention_output, attention_scores = self._compute_attention_delegate(
+            query=x[0][tf.newaxis, ...],
+            key=x[1][tf.newaxis, ...],
+            value=x[2][tf.newaxis, ...],
+            attention_mask=x[3][tf.newaxis, ...] if len(x) >= 4 else None,
+            training=training,
+        )
+        attention_output = tf.squeeze(attention_output, axis=0)
+        attention_scores = tf.squeeze(attention_scores, axis=0)
+        return attention_output, attention_scores
+
+      if attention_mask is not None:
+        elems = [query, key, value, attention_mask]
+      else:
+        elems = [query, key, value]
+
+      return tf.map_fn(
+          fn=_compute_fn,
+          elems=elems,
+          fn_output_signature=(value.dtype, value.dtype),
+          parallel_iterations=self._max_inference_parallelism,
+      )
+
+  def _compute_attention_delegate(
+      self,
+      query: tf.Tensor,
+      key: tf.Tensor,
+      value: tf.Tensor,
+      attention_mask: Optional[tf.Tensor] = None,
+      training: Optional[bool] = None,
+  ):
+    """Implements dot-product attention with query, key, value tensors."""
+    # Simply calls the implementation of the super class here, while the users
+    # can override this function for customizing attention computation.
+    return super()._compute_attention(
+        query, key, value, attention_mask, training
+    )

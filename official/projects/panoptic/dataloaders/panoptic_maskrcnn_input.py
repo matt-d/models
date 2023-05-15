@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ class TfExampleDecoder(tf_example_decoder.TfExampleDecoder):
       include_panoptic_masks: bool,
       panoptic_category_mask_key: str = 'image/panoptic/category_mask',
       panoptic_instance_mask_key: str = 'image/panoptic/instance_mask'):
-    super(TfExampleDecoder, self).__init__(
+    super().__init__(
         include_mask=True,
         regenerate_source_id=regenerate_source_id,
         mask_binarize_threshold=None)
@@ -48,18 +48,24 @@ class TfExampleDecoder(tf_example_decoder.TfExampleDecoder):
           panoptic_category_mask_key:
               tf.io.FixedLenFeature((), tf.string, default_value=''),
           panoptic_instance_mask_key:
-              tf.io.FixedLenFeature((), tf.string, default_value='')})
+              tf.io.FixedLenFeature((), tf.string, default_value='')
+      })
     self._segmentation_keys_to_features = keys_to_features
 
+  def decode_segmentation_mask(self, parsed_tensors):
+    segmentation_mask = tf.io.decode_image(
+        parsed_tensors['image/segmentation/class/encoded'], channels=1)
+    segmentation_mask.set_shape([None, None, 1])
+    return segmentation_mask
+
   def decode(self, serialized_example):
-    decoded_tensors = super(TfExampleDecoder, self).decode(serialized_example)
+    decoded_tensors = super().decode(serialized_example)
     parsed_tensors = tf.io.parse_single_example(
         serialized_example, self._segmentation_keys_to_features)
-    segmentation_mask = tf.io.decode_image(
-        parsed_tensors['image/segmentation/class/encoded'],
-        channels=1)
-    segmentation_mask.set_shape([None, None, 1])
-    decoded_tensors.update({'groundtruth_segmentation_mask': segmentation_mask})
+    decoded_tensors.update({
+        'groundtruth_segmentation_mask':
+            self.decode_segmentation_mask(parsed_tensors)
+    })
 
     if self._include_panoptic_masks:
       category_mask = tf.io.decode_image(
@@ -94,10 +100,13 @@ class Parser(maskrcnn_input.Parser):
                rpn_batch_size_per_im=256,
                rpn_fg_fraction=0.5,
                aug_rand_hflip=False,
+               aug_rand_vflip=False,
                aug_scale_min=1.0,
                aug_scale_max=1.0,
+               aug_type=None,
                skip_crowd_during_training=True,
                max_num_instances=100,
+               outer_boxes_scale=1.0,
                mask_crop_size=112,
                segmentation_resize_eval_groundtruth=True,
                segmentation_groundtruth_padded_size=None,
@@ -125,16 +134,21 @@ class Parser(maskrcnn_input.Parser):
       rpn_unmatched_threshold: `float`, unmatched threshold for anchors in RPN.
       rpn_batch_size_per_im: `int` for batch size per image in RPN.
       rpn_fg_fraction: `float` for forground fraction per batch in RPN.
-      aug_rand_hflip: `bool`, if True, augment training with random
-        horizontal flip.
+      aug_rand_hflip: `bool`, if True, augment training with random horizontal
+        flip.
+      aug_rand_vflip: `bool`, if True, augment training with random vertical
+        flip.
       aug_scale_min: `float`, the minimum scale applied to `output_size` for
         data augmentation during training.
       aug_scale_max: `float`, the maximum scale applied to `output_size` for
         data augmentation during training.
+      aug_type: An optional Augmentation object with params for AutoAugment.
       skip_crowd_during_training: `bool`, if True, skip annotations labeled with
         `is_crowd` equals to 1.
       max_num_instances: `int` number of maximum number of instances in an
         image. The groundtruth data will be padded to `max_num_instances`.
+      outer_boxes_scale: a float to scale up the bounding boxes to generate
+        more inclusive masks. The scale is expected to be >=1.0.
       mask_crop_size: the size which groundtruth mask is cropped to.
       segmentation_resize_eval_groundtruth: `bool`, if True, eval groundtruth
         masks are resized to output_size.
@@ -149,7 +163,7 @@ class Parser(maskrcnn_input.Parser):
         will be parsed. Set this to true if PQ evaluator is enabled.
       dtype: `str`, data type. One of {`bfloat16`, `float32`, `float16`}.
     """
-    super(Parser, self).__init__(
+    super().__init__(
         output_size=output_size,
         min_level=min_level,
         max_level=max_level,
@@ -161,22 +175,33 @@ class Parser(maskrcnn_input.Parser):
         rpn_batch_size_per_im=rpn_batch_size_per_im,
         rpn_fg_fraction=rpn_fg_fraction,
         aug_rand_hflip=False,
+        aug_rand_vflip=False,
         aug_scale_min=aug_scale_min,
         aug_scale_max=aug_scale_max,
+        aug_type=aug_type,
         skip_crowd_during_training=skip_crowd_during_training,
         max_num_instances=max_num_instances,
         include_mask=True,
+        outer_boxes_scale=outer_boxes_scale,
         mask_crop_size=mask_crop_size,
-        dtype=dtype)
+        dtype=dtype,
+    )
 
     self.aug_rand_hflip = aug_rand_hflip
-    self._segmentation_resize_eval_groundtruth = segmentation_resize_eval_groundtruth
+    self.aug_rand_vflip = aug_rand_vflip
+    self._segmentation_resize_eval_groundtruth = (
+        segmentation_resize_eval_groundtruth
+    )
     if (not segmentation_resize_eval_groundtruth) and (
-        segmentation_groundtruth_padded_size is None):
+        segmentation_groundtruth_padded_size is None
+    ):
       raise ValueError(
           'segmentation_groundtruth_padded_size ([height, width]) needs to be'
-          'specified when segmentation_resize_eval_groundtruth is False.')
-    self._segmentation_groundtruth_padded_size = segmentation_groundtruth_padded_size
+          'specified when segmentation_resize_eval_groundtruth is False.'
+      )
+    self._segmentation_groundtruth_padded_size = (
+        segmentation_groundtruth_padded_size
+    )
     self._segmentation_ignore_label = segmentation_ignore_label
     self._panoptic_ignore_label = panoptic_ignore_label
     self._include_panoptic_masks = include_panoptic_masks
@@ -221,37 +246,49 @@ class Parser(maskrcnn_input.Parser):
           are supposed to be used in computing the segmentation loss while
           training.
     """
+    # (height, width, num_channels = 1)
+    # All the operations below support num_channels >= 1.
     segmentation_mask = data['groundtruth_segmentation_mask']
 
     # Flips image randomly during training.
-    if self.aug_rand_hflip:
-      masks = data['groundtruth_instance_masks']
-      image_mask = tf.concat([data['image'], segmentation_mask], axis=2)
+    image_mask = tf.concat([data['image'], segmentation_mask], axis=2)
+    boxes = data['groundtruth_boxes']
+    masks = data['groundtruth_instance_masks']
+    image_mask, boxes, masks = preprocess_ops.random_horizontal_flip(
+        image_mask,
+        boxes,
+        masks,
+        prob=tf.where(self.aug_rand_hflip, 0.5, 0.0),
+    )
+    image_mask, boxes, masks = preprocess_ops.random_vertical_flip(
+        image_mask,
+        boxes,
+        masks,
+        prob=tf.where(self.aug_rand_vflip, 0.5, 0.0),
+    )
 
-      image_mask, boxes, masks = preprocess_ops.random_horizontal_flip(
-          image_mask, data['groundtruth_boxes'], masks)
+    num_image_channels = data['image'].shape.as_list()[-1]
+    image = image_mask[:, :, :num_image_channels]
+    segmentation_mask = image_mask[:, :, num_image_channels:]
 
-      segmentation_mask = image_mask[:, :, -1:]
-      image = image_mask[:, :, :-1]
+    data['image'] = image
+    data['groundtruth_boxes'] = boxes
+    data['groundtruth_instance_masks'] = masks
 
-      data['image'] = image
-      data['groundtruth_boxes'] = boxes
-      data['groundtruth_instance_masks'] = masks
-
-    image, labels = super(Parser, self)._parse_train_data(data)
+    image, labels = super()._parse_train_data(data)
 
     image_info = labels['image_info']
     image_scale = image_info[2, :]
     offset = image_info[3, :]
 
-    segmentation_mask = tf.reshape(
-        segmentation_mask, shape=[1, data['height'], data['width']])
-    segmentation_mask = tf.cast(segmentation_mask, tf.float32)
+    # (height, width, num_channels = 1)
+    segmentation_mask = tf.cast(segmentation_mask, tf.int32)
 
     # Pad label and make sure the padded region assigned to the ignore label.
     # The label is first offset by +1 and then padded with 0.
     segmentation_mask += 1
-    segmentation_mask = tf.expand_dims(segmentation_mask, axis=3)
+    # (1, height, width, num_channels = 1)
+    segmentation_mask = tf.expand_dims(segmentation_mask, axis=0)
     segmentation_mask = preprocess_ops.resize_and_crop_masks(
         segmentation_mask, image_scale, self._output_size, offset)
     segmentation_mask -= 1
@@ -259,6 +296,7 @@ class Parser(maskrcnn_input.Parser):
         tf.equal(segmentation_mask, -1),
         self._segmentation_ignore_label * tf.ones_like(segmentation_mask),
         segmentation_mask)
+    # (height, width, num_channels = 1)
     segmentation_mask = tf.squeeze(segmentation_mask, axis=0)
     segmentation_valid_mask = tf.not_equal(
         segmentation_mask, self._segmentation_ignore_label)
@@ -291,9 +329,13 @@ class Parser(maskrcnn_input.Parser):
             shape [height_l, width_l, 4] representing anchor boxes at each
             level.
     """
+
     def _process_mask(mask, ignore_label, image_info):
-      mask = tf.cast(mask, dtype=tf.float32)
-      mask = tf.reshape(mask, shape=[1, data['height'], data['width'], 1])
+      # (height, width, num_channels = 1)
+      # All the operations below support num_channels >= 1.
+      mask = tf.cast(mask, dtype=tf.int32)
+      # (1, height, width, num_channels = 1)
+      mask = tf.expand_dims(mask, axis=0)
       mask += 1
 
       if self._segmentation_resize_eval_groundtruth:
@@ -314,12 +356,14 @@ class Parser(maskrcnn_input.Parser):
           tf.equal(mask, -1),
           ignore_label * tf.ones_like(mask),
           mask)
+      # (height, width, num_channels = 1)
       mask = tf.squeeze(mask, axis=0)
       return mask
 
-    image, labels = super(Parser, self)._parse_eval_data(data)
+    image, labels = super()._parse_eval_data(data)
     image_info = labels['image_info']
 
+    # (height, width, num_channels = 1)
     segmentation_mask = _process_mask(
         data['groundtruth_segmentation_mask'],
         self._segmentation_ignore_label, image_info)

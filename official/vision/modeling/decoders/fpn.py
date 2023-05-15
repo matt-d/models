@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ from official.vision.ops import spatial_transform_ops
 class FPN(tf.keras.Model):
   """Creates a Feature Pyramid Network (FPN).
 
-  This implemets the paper:
+  This implements the paper:
   Tsung-Yi Lin, Piotr Dollar, Ross Girshick, Kaiming He, Bharath Hariharan, and
   Serge Belongie.
   Feature Pyramid Networks for Object Detection.
@@ -97,10 +97,7 @@ class FPN(tf.keras.Model):
       conv2d = tf.keras.layers.SeparableConv2D
     else:
       conv2d = tf.keras.layers.Conv2D
-    if use_sync_bn:
-      norm = tf.keras.layers.experimental.SyncBatchNormalization
-    else:
-      norm = tf.keras.layers.BatchNormalization
+    norm = tf.keras.layers.BatchNormalization
     activation_fn = tf_utils.get_activation(activation, use_keras_layer=True)
 
     # Build input feature pyramid.
@@ -123,7 +120,8 @@ class FPN(tf.keras.Model):
           padding='same',
           kernel_initializer=kernel_initializer,
           kernel_regularizer=kernel_regularizer,
-          bias_regularizer=bias_regularizer)(
+          bias_regularizer=bias_regularizer,
+          name=f'lateral_{level}')(
               inputs[str(level)])
 
     # Build top-down path.
@@ -147,7 +145,7 @@ class FPN(tf.keras.Model):
       else:
         raise ValueError('Fusion type {} not supported.'.format(fusion_type))
 
-    # TODO(xianzhi): consider to remove bias in conv2d.
+    # TODO(fyangf): experiment with removing bias in conv2d.
     # Build post-hoc 3x3 convolution kernel.
     for level in range(min_level, backbone_max_level + 1):
       feats[str(level)] = conv2d(
@@ -157,10 +155,11 @@ class FPN(tf.keras.Model):
           padding='same',
           kernel_initializer=kernel_initializer,
           kernel_regularizer=kernel_regularizer,
-          bias_regularizer=bias_regularizer)(
+          bias_regularizer=bias_regularizer,
+          name=f'post_hoc_{level}')(
               feats[str(level)])
 
-    # TODO(xianzhi): consider to remove bias in conv2d.
+    # TODO(fyangf): experiment with removing bias in conv2d.
     # Build coarser FPN levels introduced for RetinaNet.
     for level in range(backbone_max_level + 1, max_level + 1):
       feats_in = feats[str(level - 1)]
@@ -173,13 +172,18 @@ class FPN(tf.keras.Model):
           padding='same',
           kernel_initializer=kernel_initializer,
           kernel_regularizer=kernel_regularizer,
-          bias_regularizer=bias_regularizer)(
+          bias_regularizer=bias_regularizer,
+          name=f'coarser_{level}')(
               feats_in)
 
     # Apply batch norm layers.
     for level in range(min_level, max_level + 1):
       feats[str(level)] = norm(
-          axis=bn_axis, momentum=norm_momentum, epsilon=norm_epsilon)(
+          axis=bn_axis,
+          momentum=norm_momentum,
+          epsilon=norm_epsilon,
+          synchronized=use_sync_bn,
+          name=f'norm_{level}')(
               feats[str(level)])
 
     self._output_specs = {

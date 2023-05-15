@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,8 +30,9 @@ class FileWritersTest(tf.test.TestCase, parameterized.TestCase):
     example_builder.add_bytes_feature('foo', 'Hello World!')
     self._example = example_builder.example
 
-  @parameterized.parameters('tfrecord', 'TFRecord', 'tfrecord_compressed',
-                            'TFRecord_Compressed')
+  @parameterized.parameters('tfrecord', 'TFRecord', 'tfrecords',
+                            'tfrecord_compressed', 'TFRecord_Compressed',
+                            'tfrecords_gzip')
   def test_write_small_dataset_success(self, file_type):
     temp_dir = self.create_tempdir()
     temp_dataset_file = os.path.join(temp_dir.full_path, 'train')

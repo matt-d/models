@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ class TfExampleBuilder(tf_example_builder.TfExampleBuilder):
     # requirement, which will transform the source ID into float32.
     if not image_source_id:
       hashed_image = int(hashlib.blake2s(encoded_image).hexdigest(), 16)
-      image_source_id = _to_bytes(str(hash(hashed_image) % ((1 << 24) + 1)))
+      image_source_id = _to_bytes(str(hashed_image % ((1 << 24) + 1)))
 
     if label is not None:
       self.add_ints_feature(feature_key.label, label)
@@ -205,7 +205,7 @@ class TfExampleBuilder(tf_example_builder.TfExampleBuilder):
       self, instance_mask_matrices: np.ndarray) -> Sequence[float]:
     return np.sum(
         instance_mask_matrices, axis=(1, 2, 3),
-        dtype=np.float).flatten().tolist()
+        dtype=float).flatten().tolist()
 
   def add_instance_mask_matrices_feature(
       self,

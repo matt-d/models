@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -147,7 +147,8 @@ def build_panoptic_maskrcnn(
       max_level=model_config.max_level,
       num_scales=model_config.anchor.num_scales,
       aspect_ratios=model_config.anchor.aspect_ratios,
-      anchor_size=model_config.anchor.anchor_size)
+      anchor_size=model_config.anchor.anchor_size,
+      outer_boxes_scale=maskrcnn_model.outer_boxes_scale)
   return model
 
 

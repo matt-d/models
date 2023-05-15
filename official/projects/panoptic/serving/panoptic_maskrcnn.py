@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ class PanopticSegmentationModule(detection.DetectionModule):
       raise ValueError('PanopticSegmentationModule module not implemented for '
                        '{} model.'.format(type(model)))
 
-    super(PanopticSegmentationModule, self).__init__(
+    super().__init__(
         params=params,
         model=model,
         batch_size=batch_size,
@@ -50,7 +50,7 @@ class PanopticSegmentationModule(detection.DetectionModule):
         num_channels=num_channels)
 
   def serve(self, images: tf.Tensor):
-    """Cast image to float and run inference.
+    """Casts image to float and run inference.
 
     Args:
       images: uint8 Tensor of shape [batch_size, None, None, 3]
@@ -103,21 +103,28 @@ class PanopticSegmentationModule(detection.DetectionModule):
     detections.pop('box_outputs')
     detections.pop('backbone_features')
     detections.pop('decoder_features')
-
-    # Normalize detection boxes to [0, 1]. Here we first map them to the
-    # original image size, then normalize them to [0, 1].
-    detections['detection_boxes'] = (
-        detections['detection_boxes'] /
-        tf.tile(image_info[:, 2:3, :], [1, 1, 2]) /
-        tf.tile(image_info[:, 0:1, :], [1, 1, 2]))
-
     if model_params.detection_generator.apply_nms:
+      # Normalize detection boxes to [0, 1]. Here we first map them to the
+      # original image size, then normalize them to [0, 1].
+      detections['detection_boxes'] = (
+          detections['detection_boxes'] /
+          tf.tile(image_info[:, 2:3, :], [1, 1, 2]) /
+          tf.tile(image_info[:, 0:1, :], [1, 1, 2]))
+
       final_outputs = {
           'detection_boxes': detections['detection_boxes'],
           'detection_scores': detections['detection_scores'],
           'detection_classes': detections['detection_classes'],
           'num_detections': detections['num_detections']
       }
+
+      if 'detection_outer_boxes' in detections:
+        detections['detection_outer_boxes'] = (
+            detections['detection_outer_boxes'] /
+            tf.tile(image_info[:, 2:3, :], [1, 1, 2]) /
+            tf.tile(image_info[:, 0:1, :], [1, 1, 2]))
+        final_outputs['detection_outer_boxes'] = (
+            detections['detection_outer_boxes'])
     else:
       final_outputs = {
           'decoded_boxes': detections['decoded_boxes'],
@@ -126,7 +133,10 @@ class PanopticSegmentationModule(detection.DetectionModule):
     masks = detections['segmentation_outputs']
     masks = tf.image.resize(masks, self._input_image_size, method='bilinear')
     classes = tf.math.argmax(masks, axis=-1)
-    scores = tf.nn.softmax(masks, axis=-1)
+    if self.params.task.losses.semantic_segmentation_use_binary_cross_entropy:
+      scores = tf.nn.sigmoid(masks)
+    else:
+      scores = tf.nn.softmax(masks, axis=-1)
     final_outputs.update({
         'detection_masks': detections['detection_masks'],
         'semantic_logits': masks,

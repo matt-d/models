@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,11 +30,12 @@ class YT8MAveragePrecisionCalculatorTest(parameterized.TestCase,
         [0.878, 0.832, 0.759, 0.621, 0.458, 0.285, 0.134],
         [0.98],
         [0.56],
-    ])
+    ], dtype=object)
     self.raw_prediction = np.random.rand(5, 10) + np.random.randint(
         low=0, high=10, size=(5, 10))
     self.ground_truth = np.array([[1, 1, 0, 0, 0, 1, 1, 0, 0, 1],
-                                  [1, 0, 1, 0, 0, 1, 0], [1], [0]])
+                                  [1, 0, 1, 0, 0, 1, 0], [1], [0]],
+                                 dtype=object)
 
     self.expected_ap = np.array([
         0.714,

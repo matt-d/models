@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ class ExampleTask(base_task.Task):
     """Builds input.
 
     The input from this function is a tf.data.Dataset that has gone through
-    pre-processing steps, such as augmentation, batching, shuffuling, etc.
+    pre-processing steps, such as augmentation, batching, shuffling, etc.
 
     Args:
       params: The experiment config.
@@ -86,7 +86,7 @@ class ExampleTask(base_task.Task):
     """Builds losses for training and validation.
 
     Args:
-      labels: Input groundtruth labels.
+      labels: Input groundt-ruth labels.
       model_outputs: Output of the model.
       aux_losses: The auxiliarly loss tensors, i.e. `losses` in tf.keras.Model.
 
@@ -183,7 +183,7 @@ class ExampleTask(base_task.Task):
                       inputs: Tuple[Any, Any],
                       model: tf.keras.Model,
                       metrics: Optional[List[Any]] = None) -> Mapping[str, Any]:
-    """Runs validatation step.
+    """Runs validation step.
 
     Args:
       inputs: A tuple of input tensors of (features, labels).
@@ -205,5 +205,5 @@ class ExampleTask(base_task.Task):
     return logs
 
   def inference_step(self, inputs: tf.Tensor, model: tf.keras.Model) -> Any:
-    """Performs the forward step. It is used in validation_step."""
+    """Performs the forward step. It is used in 'validation_step'."""
     return model(inputs, training=False)

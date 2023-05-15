@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import enum
 import functools
 from typing import Callable, Tuple, Union
 
+import gin
 import numpy as np
 from scipy import linalg
 import tensorflow as tf
@@ -41,6 +42,7 @@ _Initializer = Union[str, tf.keras.initializers.Initializer]
 default_kernel_initializer = tf.keras.initializers.TruncatedNormal(stddev=2e-2)
 
 
+@gin.constants_from_enum
 class MixingMechanism(enum.Enum):
   """Determines the type of mixing layer.
 
@@ -279,5 +281,5 @@ def _pick_fourier_transform(
 
     return functools.partial(
         two_dim_matmul,
-        matrix_dim_one=tf.convert_to_tensor(dft_mat_seq),
-        matrix_dim_two=tf.convert_to_tensor(dft_mat_hidden))
+        matrix_dim_one=dft_mat_seq,
+        matrix_dim_two=dft_mat_hidden)

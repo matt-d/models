@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,11 +20,11 @@ from official.modeling.optimization import ema_optimizer
 from official.modeling.optimization import optimizer_factory
 from official.projects.yolo.optimization import sgd_torch
 
-optimizer_factory.OPTIMIZERS_CLS.update({
+optimizer_factory.LEGACY_OPTIMIZERS_CLS.update({
     'sgd_torch': sgd_torch.SGDTorch,
 })
 
-OPTIMIZERS_CLS = optimizer_factory.OPTIMIZERS_CLS
+OPTIMIZERS_CLS = optimizer_factory.LEGACY_OPTIMIZERS_CLS
 LR_CLS = optimizer_factory.LR_CLS
 WARMUP_CLS = optimizer_factory.WARMUP_CLS
 

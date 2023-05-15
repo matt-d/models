@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -129,7 +129,8 @@ class PanopticDeeplab(hyperparams.Config):
   norm_activation: common.NormActivation = common.NormActivation()
   backbone: backbones.Backbone = backbones.Backbone(
       type='resnet', resnet=backbones.ResNet())
-  decoder: decoders.Decoder = decoders.Decoder(type='aspp')
+  decoder: decoders.Decoder = decoders.Decoder(
+      type='aspp', aspp=decoders.ASPP(level=3))
   semantic_head: SemanticHead = SemanticHead()
   instance_head: InstanceHead = InstanceHead()
   shared_decoder: bool = False

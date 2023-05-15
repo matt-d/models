@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -139,9 +139,10 @@ class RetinaNetHeadQuantized(tf.keras.layers.Layer):
       num_filters: An `int` number that represents the number of filters of the
         intermediate conv layers.
       attribute_heads: If not None, a list that contains a dict for each
-        additional attribute head. Each dict consists of 3 key-value pairs:
-        `name`, `type` ('regression' or 'classification'), and `size` (number
-        of predicted values for each instance).
+        additional attribute head. Each dict consists of 4 key-value pairs:
+        `name`, `type` ('regression' or 'classification'), `size` (number of
+        predicted values for each instance), and `prediction_tower_name`
+        (optional, specifies shared prediction towers.)
       use_separable_conv: A `bool` that indicates whether the separable
         convolution layers is used.
       activation: A `str` that indicates which activation is used, e.g. 'relu',
@@ -157,9 +158,9 @@ class RetinaNetHeadQuantized(tf.keras.layers.Layer):
         box. For example, `num_params_per_anchor` would be 4 for axis-aligned
         anchor boxes specified by their y-centers, x-centers, heights, and
         widths.
-      share_classification_heads: A `bool` that indicates whethere
-        sharing weights among the main and attribute classification heads. Not
-        used in the QAT model.
+      share_classification_heads: A `bool` that indicates whethere sharing
+        weights among the main and attribute classification heads. Not used in
+        the QAT model.
       **kwargs: Additional keyword arguments to be passed.
     """
     del share_classification_heads
@@ -417,15 +418,31 @@ class RetinaNetHeadQuantized(tf.keras.layers.Layer):
 
       # attribute nets.
       if self._config_dict['attribute_heads']:
+        prediction_tower_output = {}
         for att_config in self._config_dict['attribute_heads']:
           att_name = att_config['name']
-          x = this_level_features
-          for conv, norm in zip(self._att_convs[att_name],
-                                self._att_norms[att_name][i]):
-            x = conv(x)
-            x = norm(x)
-            x = self._activation(x)
-          attributes[att_name][str(level)] = self._att_predictors[att_name](x)
+
+          def build_prediction_tower(atttribute_name, features, feature_level):
+            x = features
+            for conv, norm in zip(
+                self._att_convs[atttribute_name],
+                self._att_norms[atttribute_name][feature_level]):
+              x = conv(x)
+              x = norm(x)
+              x = self._activation(x)
+            return x
+
+          prediction_tower_name = att_config['prediction_tower_name']
+          if not prediction_tower_name:
+            attributes[att_name][str(level)] = self._att_predictors[att_name](
+                build_prediction_tower(att_name, this_level_features, i))
+          else:
+            if prediction_tower_name not in prediction_tower_output:
+              prediction_tower_output[
+                  prediction_tower_name] = build_prediction_tower(
+                      att_name, this_level_features, i)
+            attributes[att_name][str(level)] = self._att_predictors[att_name](
+                prediction_tower_output[prediction_tower_name])
 
     return scores, boxes, attributes
 
@@ -435,4 +452,3 @@ class RetinaNetHeadQuantized(tf.keras.layers.Layer):
   @classmethod
   def from_config(cls, config):
     return cls(**config)
-

@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ class TNLayerTest(tf.test.TestCase, parameterized.TestCase):
   """
 
   def setUp(self):
-    super(TNLayerTest, self).setUp()
+    super().setUp()
     self.labels = np.concatenate((np.ones((50, 1)), np.zeros((50, 1))), axis=0)
 
   def _build_model(self, data, proj_multiple=2):
@@ -40,21 +40,6 @@ class TNLayerTest(tf.test.TestCase, parameterized.TestCase):
             input_shape=(data.shape[-1],)))
     model.add(tf.keras.layers.Dense(1, activation='sigmoid'))
     return model
-
-  @parameterized.parameters((768, 6), (1024, 2))
-  def test_keras_layer(self, input_dim, proj_multiple):
-    data = np.random.normal(size=(100, input_dim))
-    data = data.astype(np.float32)
-    tf.keras.__internal__.utils.layer_test(
-        TNExpandCondense,
-        kwargs={
-            'proj_multiplier': proj_multiple,
-            'input_shape': data.shape
-        },
-        input_shape=data.shape,
-        input_data=data,
-        expected_output_shape=(None, data.shape[-1]),
-        expected_output_dtype=data.dtype)
 
   @parameterized.parameters((768, 6), (1024, 2))
   def test_train(self, input_dim, proj_multiple):

@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +13,16 @@
 # limitations under the License.
 
 """Image segmentation task definition."""
-from typing import Any, Optional, List, Tuple, Mapping, Union
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 from absl import logging
 import tensorflow as tf
+
 from official.common import dataset_fn
 from official.core import base_task
 from official.core import task_factory
 from official.vision.configs import semantic_segmentation as exp_cfg
+from official.vision.dataloaders import input_reader
 from official.vision.dataloaders import input_reader_factory
 from official.vision.dataloaders import segmentation_input
 from official.vision.dataloaders import tfds_factory
@@ -50,6 +52,9 @@ class SemanticSegmentationTask(base_task.Task):
         input_specs=input_specs,
         model_config=self.task_config.model,
         l2_regularizer=l2_regularizer)
+    # Builds the model
+    dummy_inputs = tf.keras.Input(self.task_config.model.input_size)
+    _ = model(dummy_inputs, training=False)
     return model
 
   def initialize(self, model: tf.keras.Model):
@@ -91,7 +96,9 @@ class SemanticSegmentationTask(base_task.Task):
     if params.tfds_name:
       decoder = tfds_factory.get_segmentation_decoder(params.tfds_name)
     else:
-      decoder = segmentation_input.Decoder()
+      decoder = segmentation_input.Decoder(
+          image_feature=params.image_feature,
+          additional_dense_features=params.additional_dense_features)
 
     parser = segmentation_input.Parser(
         output_size=params.output_size,
@@ -104,12 +111,15 @@ class SemanticSegmentationTask(base_task.Task):
         aug_scale_max=params.aug_scale_max,
         aug_rand_hflip=params.aug_rand_hflip,
         preserve_aspect_ratio=params.preserve_aspect_ratio,
-        dtype=params.dtype)
+        dtype=params.dtype,
+        image_feature=params.image_feature,
+        additional_dense_features=params.additional_dense_features)
 
     reader = input_reader_factory.input_reader_generator(
         params,
         dataset_fn=dataset_fn.pick_dataset_fn(params.file_type),
         decoder_fn=decoder.decode,
+        combine_fn=input_reader.create_combine_fn(params),
         parser_fn=parser.parse_fn(params.is_training))
 
     dataset = reader.read(input_context=input_context)
@@ -136,18 +146,19 @@ class SemanticSegmentationTask(base_task.Task):
         loss_params.class_weights,
         loss_params.ignore_label,
         use_groundtruth_dimension=loss_params.use_groundtruth_dimension,
+        use_binary_cross_entropy=loss_params.use_binary_cross_entropy,
         top_k_percent_pixels=loss_params.top_k_percent_pixels,
-        gt_is_matting_map=loss_params.gt_is_matting_map
-    )
+        gt_is_matting_map=loss_params.gt_is_matting_map)
 
     total_loss = segmentation_loss_fn(model_outputs['logits'], labels['masks'])
 
     if 'mask_scores' in model_outputs:
       mask_scoring_loss_fn = segmentation_losses.MaskScoringLoss(
           loss_params.ignore_label)
-      total_loss += mask_scoring_loss_fn(model_outputs['mask_scores'],
-                                         model_outputs['logits'],
-                                         labels['masks'])
+      total_loss += loss_params.mask_scoring_weight * mask_scoring_loss_fn(
+          model_outputs['mask_scores'],
+          model_outputs['logits'],
+          labels['masks'])
 
     if aux_losses:
       total_loss += tf.add_n(aux_losses)
@@ -181,6 +192,8 @@ class SemanticSegmentationTask(base_task.Task):
   def build_metrics(self, training: bool = True):
     """Gets streaming metrics for training/validation."""
     metrics = []
+    self.iou_metric = None
+
     if training and self.task_config.evaluation.report_train_mean_iou:
       metrics.append(
           segmentation_metrics.MeanIoU(
@@ -196,8 +209,8 @@ class SemanticSegmentationTask(base_task.Task):
       self.iou_metric = segmentation_metrics.PerClassIoU(
           name='per_class_iou',
           num_classes=self.task_config.model.num_classes,
-          rescale_predictions=not self.task_config.validation_data
-          .resize_eval_groundtruth,
+          rescale_predictions=(
+              not self.task_config.validation_data.resize_eval_groundtruth),
           dtype=tf.float32)
       if (self.task_config.validation_data.resize_eval_groundtruth and
           self.task_config.model.get('mask_scoring_head')):
@@ -205,10 +218,6 @@ class SemanticSegmentationTask(base_task.Task):
         # preticted mask scores.
         metrics.append(
             tf.keras.metrics.MeanSquaredError(name='mask_scores_mse'))
-
-      # Update state on CPU if TPUStrategy due to dynamic resizing.
-      self._process_iou_metric_on_cpu = isinstance(tf.distribute.get_strategy(),
-                                                   tf.distribute.TPUStrategy)
 
     return metrics
 
@@ -307,14 +316,10 @@ class SemanticSegmentationTask(base_task.Task):
 
     logs = {self.loss: loss}
 
-    if self._process_iou_metric_on_cpu:
-      logs.update({self.iou_metric.name: (labels, outputs['logits'])})
-    else:
+    if self.iou_metric is not None:
       self.iou_metric.update_state(labels, outputs['logits'])
-
     if metrics:
       self.process_metrics(metrics, labels, outputs)
-      logs.update({m.name: m.result() for m in metrics})
 
     return logs
 
@@ -323,21 +328,19 @@ class SemanticSegmentationTask(base_task.Task):
     return model(inputs, training=False)
 
   def aggregate_logs(self, state=None, step_outputs=None):
-    if state is None:
+    if state is None and self.iou_metric is not None:
       self.iou_metric.reset_states()
       state = self.iou_metric
-    if self._process_iou_metric_on_cpu:
-      self.iou_metric.update_state(step_outputs[self.iou_metric.name][0],
-                                   step_outputs[self.iou_metric.name][1])
     return state
 
   def reduce_aggregated_logs(self, aggregated_logs, global_step=None):
     result = {}
-    ious = self.iou_metric.result()
-    # TODO(arashwan): support loading class name from a label map file.
-    if self.task_config.evaluation.report_per_class_iou:
-      for i, value in enumerate(ious.numpy()):
-        result.update({'iou/{}'.format(i): value})
-    # Computes mean IoU
-    result.update({'mean_iou': tf.reduce_mean(ious).numpy()})
+    if self.iou_metric is not None:
+      ious = self.iou_metric.result()
+      # TODO(arashwan): support loading class name from a label map file.
+      if self.task_config.evaluation.report_per_class_iou:
+        for i, value in enumerate(ious.numpy()):
+          result.update({'iou/{}'.format(i): value})
+      # Computes mean IoU
+      result.update({'mean_iou': tf.reduce_mean(ious)})
     return result

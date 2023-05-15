@@ -20,7 +20,7 @@ limitations under the License.
 #include <numeric>
 #include <vector>
 
-#include "base/logging.h"
+#include <glog/logging.h>
 #include "absl/strings/str_join.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/internal/types.h"
@@ -97,7 +97,7 @@ void BeamSearch::PopulateLogLookupTable(const TfLiteTensor &tensor) {
   if (!log_lookup_table_populated_) {
     for (int value = 0; value < 256; ++value) {
       log_lookup_table_[value] =
-          logf(::seq_flow_lite::PodDequantizeValue(tensor, value));
+          logf(::seq_flow_lite::PodDequantizeValue<uint8_t>(tensor, value));
     }
     log_lookup_table_populated_ = true;
   }
@@ -114,7 +114,7 @@ void BeamSearch::PopulateSoftmaxLookupTable(const TfLiteTensor &tensor) {
 }
 
 float BeamSearch::InverseLengthPenalty(int step) {
-  return 1.0f / std::powf((5.f + step) / 6.f, alpha_);
+  return 1.0f / std::pow((5.f + step) / 6.f, alpha_);
 }
 
 void BeamSearch::FindTopKFloat(const TfLiteTensor &tensor, int valid_beams,

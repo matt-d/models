@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -339,32 +339,26 @@ class Parser(parser.Parser):
         'source_id': utils.process_source_id(data['source_id']),
         'bbox': tf.cast(boxes, dtype=self._dtype),
         'classes': tf.cast(classes, dtype=self._dtype),
+        # For OTA loss.
+        'image_info': info,
     })
 
     # Update the labels dictionary.
     if not is_training:
       # Sets up groundtruth data for evaluation.
       groundtruths = {
-          'source_id':
-              labels['source_id'],
-          'height':
-              data['height'],
-          'width':
-              data['width'],
-          'num_detections':
-              tf.shape(data['groundtruth_boxes'])[0],
-          'image_info':
-              info,
-          'boxes':
-              bbox_ops.denormalize_boxes(
-                  data['groundtruth_boxes'],
-                  tf.cast([data['height'], data['width']], gt_boxes.dtype)),
-          'classes':
-              data['groundtruth_classes'],
-          'areas':
-              data['groundtruth_area'],
-          'is_crowds':
-              tf.cast(tf.gather(data['groundtruth_is_crowd'], inds), tf.int32),
+          'source_id': labels['source_id'],
+          'height': data['height'],
+          'width': data['width'],
+          'num_detections': tf.shape(data['groundtruth_boxes'])[0],
+          'image_info': info,
+          'boxes': bbox_ops.denormalize_boxes(
+              data['groundtruth_boxes'],
+              tf.cast([data['height'], data['width']], gt_boxes.dtype)),
+          'classes': data['groundtruth_classes'],
+          'areas': data['groundtruth_area'],
+          'is_crowds': tf.cast(
+              tf.gather(data['groundtruth_is_crowd'], inds), tf.int32),
       }
       groundtruths['source_id'] = utils.process_source_id(
           groundtruths['source_id'])

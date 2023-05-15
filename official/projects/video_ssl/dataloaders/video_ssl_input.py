@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -221,7 +221,7 @@ class Parser(video_input.Parser):
                input_params: exp_cfg.DataConfig,
                image_key: str = IMAGE_KEY,
                label_key: str = LABEL_KEY):
-    super(Parser, self).__init__(input_params, image_key, label_key)
+    super().__init__(input_params, image_key, label_key)
     self._is_ssl = input_params.is_ssl
 
   def _parse_train_data(

@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -204,7 +204,8 @@ def build_maskrcnn(input_specs: tf.keras.layers.InputSpec,
       max_num_detections=generator_config.max_num_detections,
       nms_version=generator_config.nms_version,
       use_cpu_nms=generator_config.use_cpu_nms,
-      soft_nms_sigma=generator_config.soft_nms_sigma)
+      soft_nms_sigma=generator_config.soft_nms_sigma,
+      use_sigmoid_probability=generator_config.use_sigmoid_probability)
 
   if model_config.include_mask:
     mask_head = instance_heads.MaskHead(
@@ -251,7 +252,8 @@ def build_maskrcnn(input_specs: tf.keras.layers.InputSpec,
       max_level=model_config.max_level,
       num_scales=model_config.anchor.num_scales,
       aspect_ratios=model_config.anchor.aspect_ratios,
-      anchor_size=model_config.anchor.anchor_size)
+      anchor_size=model_config.anchor.anchor_size,
+      outer_boxes_scale=model_config.outer_boxes_scale)
   return model
 
 
@@ -306,6 +308,11 @@ def build_retinanet(
     decoder_features = decoder(backbone_features)
     _ = head(decoder_features)
 
+  # Add `input_image_size` into `tflite_post_processing_config`.
+  tflite_post_processing_config = generator_config.tflite_post_processing.as_dict(
+  )
+  tflite_post_processing_config['input_image_size'] = (input_specs.shape[1],
+                                                       input_specs.shape[2])
   detection_generator_obj = detection_generator.MultilevelDetectionGenerator(
       apply_nms=generator_config.apply_nms,
       pre_nms_top_k=generator_config.pre_nms_top_k,
@@ -315,8 +322,10 @@ def build_retinanet(
       nms_version=generator_config.nms_version,
       use_cpu_nms=generator_config.use_cpu_nms,
       soft_nms_sigma=generator_config.soft_nms_sigma,
-      tflite_post_processing_config=generator_config.tflite_post_processing
-      .as_dict())
+      tflite_post_processing_config=tflite_post_processing_config,
+      return_decoded=generator_config.return_decoded,
+      use_class_agnostic_nms=generator_config.use_class_agnostic_nms,
+  )
 
   model = retinanet_model.RetinaNetModel(
       backbone,
@@ -367,6 +376,7 @@ def build_segmentation_model(
       low_level=head_config.low_level,
       low_level_num_filters=head_config.low_level_num_filters,
       activation=norm_activation_config.activation,
+      logit_activation=head_config.logit_activation,
       use_sync_bn=norm_activation_config.use_sync_bn,
       norm_momentum=norm_activation_config.norm_momentum,
       norm_epsilon=norm_activation_config.norm_epsilon,

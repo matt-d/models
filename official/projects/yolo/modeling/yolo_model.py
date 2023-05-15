@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Yolo models."""
 
-from typing import Mapping, Union
+from typing import Mapping, Union, Any, Dict
 import tensorflow as tf
 from official.projects.yolo.modeling.layers import nn_blocks
 
@@ -52,9 +52,11 @@ class Yolo(tf.keras.Model):
     self._head = head
     self._detection_generator = detection_generator
     self._fused = False
-    return
 
-  def call(self, inputs, training=False):
+  def call(self,
+           inputs: tf.Tensor,
+           training: bool = None,
+           mask: Any = None) -> Dict[str, tf.Tensor]:
     maps = self.backbone(inputs)
     decoded_maps = self.decoder(maps)
     raw_predictions = self.head(decoded_maps)

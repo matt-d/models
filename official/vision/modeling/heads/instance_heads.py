@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -120,13 +120,12 @@ class DetectionHead(tf.keras.layers.Layer):
           'kernel_regularizer': self._config_dict['kernel_regularizer'],
           'bias_regularizer': self._config_dict['bias_regularizer'],
       })
-    bn_op = (tf.keras.layers.experimental.SyncBatchNormalization
-             if self._config_dict['use_sync_bn']
-             else tf.keras.layers.BatchNormalization)
+    bn_op = tf.keras.layers.BatchNormalization
     bn_kwargs = {
         'axis': self._bn_axis,
         'momentum': self._config_dict['norm_momentum'],
         'epsilon': self._config_dict['norm_epsilon'],
+        'synchronized': self._config_dict['use_sync_bn'],
     }
 
     self._convs = []
@@ -314,13 +313,12 @@ class MaskHead(tf.keras.layers.Layer):
           'kernel_regularizer': self._config_dict['kernel_regularizer'],
           'bias_regularizer': self._config_dict['bias_regularizer'],
       })
-    bn_op = (tf.keras.layers.experimental.SyncBatchNormalization
-             if self._config_dict['use_sync_bn']
-             else tf.keras.layers.BatchNormalization)
+    bn_op = tf.keras.layers.BatchNormalization
     bn_kwargs = {
         'axis': self._bn_axis,
         'momentum': self._config_dict['norm_momentum'],
         'epsilon': self._config_dict['norm_epsilon'],
+        'synchronized': self._config_dict['use_sync_bn'],
     }
 
     self._convs = []
@@ -399,10 +397,7 @@ class MaskHead(tf.keras.layers.Layer):
          roi_width * upsample_factor], representing the mask predictions.
     """
     roi_features, roi_classes = inputs
-    batch_size, num_rois, height, width, filters = (
-        roi_features.get_shape().as_list())
-    if batch_size is None:
-      batch_size = tf.shape(roi_features)[0]
+    _, num_rois, height, width, filters = roi_features.get_shape().as_list()
 
     x = tf.reshape(roi_features, [-1, height, width, filters])
     for conv, bn in zip(self._convs, self._conv_norms):
@@ -420,29 +415,15 @@ class MaskHead(tf.keras.layers.Layer):
     mask_width = width * self._config_dict['upsample_factor']
 
     if self._config_dict['class_agnostic']:
-      logits = tf.reshape(logits, [-1, num_rois, mask_height, mask_width, 1])
+      return tf.reshape(logits, [-1, num_rois, mask_height, mask_width])
     else:
       logits = tf.reshape(
           logits,
           [-1, num_rois, mask_height, mask_width,
            self._config_dict['num_classes']])
-
-    batch_indices = tf.tile(
-        tf.expand_dims(tf.range(batch_size), axis=1), [1, num_rois])
-    mask_indices = tf.tile(
-        tf.expand_dims(tf.range(num_rois), axis=0), [batch_size, 1])
-
-    if self._config_dict['class_agnostic']:
-      class_gather_indices = tf.zeros_like(roi_classes, dtype=tf.int32)
-    else:
-      class_gather_indices = tf.cast(roi_classes, dtype=tf.int32)
-
-    gather_indices = tf.stack(
-        [batch_indices, mask_indices, class_gather_indices],
-        axis=2)
-    mask_outputs = tf.gather_nd(
-        tf.transpose(logits, [0, 1, 4, 2, 3]), gather_indices)
-    return mask_outputs
+      return tf.gather(
+          logits, tf.cast(roi_classes, dtype=tf.int32), axis=-1, batch_dims=2
+      )
 
   def get_config(self):
     return self._config_dict

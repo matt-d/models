@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -84,7 +84,8 @@ class YoloTask(base_task.Task):
     dataset.global_batch_size = 1
     box_reader = kmeans_anchors.BoxGenInputReader(
         dataset,
-        dataset_fn=tf.data.TFRecordDataset,
+        dataset_fn=dataset_fn.pick_dataset_fn(
+            self.task_config.train_data.file_type),
         decoder_fn=decoder.decode)
 
     boxes = box_reader.read(
@@ -117,6 +118,8 @@ class YoloTask(base_task.Task):
         tf.keras.regularizers.l2(l2_weight_decay) if l2_weight_decay else None)
     model, losses = factory.build_yolo(
         input_specs, model_base_cfg, l2_regularizer)
+    model.build(input_specs.shape)
+    model.summary(print_fn=logging.info)
 
     # save for later usage within the task.
     self._loss_fn = losses
@@ -239,7 +242,8 @@ class YoloTask(base_task.Task):
           annotation_file=annotation_file,
           include_mask=False,
           need_rescale_bboxes=False,
-          per_category_metrics=self._task_config.per_category_metrics)
+          per_category_metrics=self._task_config.per_category_metrics,
+          max_num_eval_detections=self.task_config.max_num_eval_detections)
 
     return metrics
 

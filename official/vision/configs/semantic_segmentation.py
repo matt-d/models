@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,10 @@
 """Semantic segmentation configuration definition."""
 import dataclasses
 import os
-from typing import List, Optional, Union
+from typing import List, Optional, Sequence, Union
 
 import numpy as np
+
 from official.core import config_definitions as cfg
 from official.core import exp_factory
 from official.modeling import hyperparams
@@ -25,16 +26,47 @@ from official.modeling import optimization
 from official.vision.configs import common
 from official.vision.configs import decoders
 from official.vision.configs import backbones
+from official.vision.ops import preprocess_ops
+
+
+@dataclasses.dataclass
+class DenseFeatureConfig(hyperparams.Config):
+  """Config for dense features, such as RGB pixels, masks, heatmaps.
+
+  The dense features are encoded images in TF examples. Thus they are
+  1-, 3- or 4-channel. For features with another channel number (e.g.
+  optical flow), they could be encoded in multiple 1-channel features.
+  The default config is for RGB input, with mean and stddev from ImageNet
+  datasets. Only supports 8-bit encoded features with the maximum value = 255.
+
+  Attributes:
+    feature_name: The key of the feature in TF examples.
+    num_channels: An `int` specifying the number of channels of the feature.
+    mean: A list of floats in the range of [0, 255] representing the mean value
+      of each channel. The length of the list should match num_channels.
+    stddev: A list of floats in the range of [0, 255] representing the standard
+      deviation of each channel. The length should match num_channels.
+  """
+  feature_name: str = 'image/encoded'
+  num_channels: int = 3
+  mean: List[float] = dataclasses.field(
+      default_factory=lambda: preprocess_ops.MEAN_RGB
+  )
+  stddev: List[float] = dataclasses.field(
+      default_factory=lambda: preprocess_ops.STDDEV_RGB
+  )
 
 
 @dataclasses.dataclass
 class DataConfig(cfg.DataConfig):
   """Input config for training."""
+  image_feature: DenseFeatureConfig = DenseFeatureConfig()
   output_size: List[int] = dataclasses.field(default_factory=list)
   # If crop_size is specified, image will be resized first to
   # output_size, then crop of size crop_size will be cropped.
   crop_size: List[int] = dataclasses.field(default_factory=list)
-  input_path: str = ''
+  input_path: Union[Sequence[str], str, hyperparams.Config] = ''
+  weights: Optional[hyperparams.Config] = None
   global_batch_size: int = 0
   is_training: bool = True
   dtype: str = 'float32'
@@ -53,6 +85,8 @@ class DataConfig(cfg.DataConfig):
   drop_remainder: bool = True
   file_type: str = 'tfrecord'
   decoder: Optional[common.DataDecoder] = common.DataDecoder()
+  additional_dense_features: List[DenseFeatureConfig] = dataclasses.field(
+      default_factory=list)
 
 
 @dataclasses.dataclass
@@ -64,6 +98,7 @@ class SegmentationHead(hyperparams.Config):
   use_depthwise_convolution: bool = False
   prediction_kernel_size: int = 1
   upsample_factor: int = 1
+  logit_activation: Optional[str] = None  # None, 'sigmoid', or 'softmax'.
   feature_fusion: Optional[
       str] = None  # None, deeplabv3plus, panoptic_fpn_fusion or pyramid_fusion
   # deeplabv3plus feature fusion params
@@ -82,6 +117,7 @@ class MaskScoringHead(hyperparams.Config):
   fc_input_size: List[int] = dataclasses.field(default_factory=list)
   num_fcs: int = 2
   fc_dims: int = 1024
+  use_depthwise_convolution: bool = False
 
 
 @dataclasses.dataclass
@@ -101,6 +137,7 @@ class SemanticSegmentationModel(hyperparams.Config):
 
 @dataclasses.dataclass
 class Losses(hyperparams.Config):
+  """Loss function config."""
   loss_weight: float = 1.0
   label_smoothing: float = 0.0
   ignore_label: int = 255
@@ -108,17 +145,23 @@ class Losses(hyperparams.Config):
   class_weights: List[float] = dataclasses.field(default_factory=list)
   l2_weight_decay: float = 0.0
   use_groundtruth_dimension: bool = True
+  # If true, use binary cross entropy (sigmoid) in loss, otherwise, use
+  # categorical cross entropy (softmax).
+  use_binary_cross_entropy: bool = False
   top_k_percent_pixels: float = 1.0
+  mask_scoring_weight: float = 1.0
 
 
 @dataclasses.dataclass
 class Evaluation(hyperparams.Config):
+  """Evaluation config."""
   report_per_class_iou: bool = True
   report_train_mean_iou: bool = True  # Turning this off can speed up training.
 
 
 @dataclasses.dataclass
 class ExportConfig(hyperparams.Config):
+  """Model export config."""
   # Whether to rescale the predicted mask to the original image size.
   rescale_output: bool = False
 

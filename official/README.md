@@ -58,6 +58,7 @@ In the near future, we will add:
 |-------|-------------------|
 | [RetinaNet](vision/MODEL_GARDEN.md) | [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002) |
 | [Mask R-CNN](vision/MODEL_GARDEN.md) | [Mask R-CNN](https://arxiv.org/abs/1703.06870) |
+| [YOLO](projects/yolo/README.md) | [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696) |
 | [SpineNet](vision/MODEL_GARDEN.md) | [SpineNet: Learning Scale-Permuted Backbone for Recognition and Localization](https://arxiv.org/abs/1912.05027) |
 | [Cascade RCNN-RS and RetinaNet-RS](vision/MODEL_GARDEN.md) | [Simple Training Strategies and Model Scaling for Object Detection](https://arxiv.org/abs/2107.00057)|
 
@@ -150,7 +151,15 @@ don't recommend earlier versions.
 ### Installation
 
 Please check [here](https://github.com/tensorflow/models#Installation) for the
-instructions
+instructions.
+
+Available pypi packages:
+
+* [tf-models-official](https://pypi.org/project/tf-models-official/)
+* [tf-models-nightly](https://pypi.org/project/tf-models-nightly/): nightly
+release with the latest changes.
+* [tf-models-no-deps](https://pypi.org/project/tf-models-no-deps/): without
+`tensorflow` and `tensorflow-text` in the `install_requires` list.
 
 ## Contributions
 

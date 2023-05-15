@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -105,7 +105,7 @@ def cycxhw_to_yxyx(boxes):
 
 
 def jitter_boxes(boxes, noise_scale=0.025):
-  """Jitter the box coordinates by some noise distribution.
+  """Jitters the box coordinates by some noise distribution.
 
   Args:
     boxes: a tensor whose last dimension is 4 representing the coordinates of
@@ -239,6 +239,28 @@ def horizontal_flip_boxes(normalized_boxes):
     return flipped_boxes
 
 
+def vertical_flip_boxes(normalized_boxes):
+  """Flips normalized boxes vertically.
+
+  Args:
+    normalized_boxes: the boxes in normalzied coordinates.
+
+  Returns:
+    vertically flipped boxes.
+  """
+  if normalized_boxes.shape[-1] != 4:
+    raise ValueError('boxes.shape[-1] is {:d}, but must be 4.'.format(
+        normalized_boxes.shape[-1]))
+
+  with tf.name_scope('vertical_flip_boxes'):
+    ymin, xmin, ymax, xmax = tf.split(
+        value=normalized_boxes, num_or_size_splits=4, axis=-1)
+    flipped_ymin = tf.subtract(1.0, ymax)
+    flipped_ymax = tf.subtract(1.0, ymin)
+    flipped_boxes = tf.concat([flipped_ymin, xmin, flipped_ymax, xmax], axis=-1)
+    return flipped_boxes
+
+
 def clip_boxes(boxes, image_shape):
   """Clips boxes to image boundaries.
 
@@ -274,7 +296,7 @@ def clip_boxes(boxes, image_shape):
 
 
 def compute_outer_boxes(boxes, image_shape, scale=1.0):
-  """Compute outer box encloses an object with a margin.
+  """Computes outer box encloses an object with a margin.
 
   Args:
     boxes: a tensor whose last dimension is 4 representing the coordinates of
@@ -293,6 +315,8 @@ def compute_outer_boxes(boxes, image_shape, scale=1.0):
     raise ValueError(
         'scale is {}, but outer box scale must be greater than 1.0.'.format(
             scale))
+  if scale == 1.0:
+    return boxes
   centers_y = (boxes[..., 0] + boxes[..., 2]) / 2.0
   centers_x = (boxes[..., 1] + boxes[..., 3]) / 2.0
   box_height = (boxes[..., 2] - boxes[..., 0]) * scale
@@ -300,13 +324,13 @@ def compute_outer_boxes(boxes, image_shape, scale=1.0):
   outer_boxes = tf.stack(
       [centers_y - box_height / 2.0, centers_x - box_width / 2.0,
        centers_y + box_height / 2.0, centers_x + box_width / 2.0],
-      axis=1)
+      axis=-1)
   outer_boxes = clip_boxes(outer_boxes, image_shape)
   return outer_boxes
 
 
 def encode_boxes(boxes, anchors, weights=None):
-  """Encode boxes to targets.
+  """Encodes boxes to targets.
 
   Args:
     boxes: a tensor whose last dimension is 4 representing the coordinates
@@ -362,17 +386,17 @@ def encode_boxes(boxes, anchors, weights=None):
 
 
 def decode_boxes(encoded_boxes, anchors, weights=None):
-  """Decode boxes.
+  """Decodes boxes.
 
   Args:
     encoded_boxes: a tensor whose last dimension is 4 representing the
-      coordinates of encoded boxes in ymin, xmin, ymax, xmax order.
+      coordinates of encoded boxes in dy, dx, dh, dw in order.
     anchors: a tensor whose shape is the same as, or `broadcastable` to `boxes`,
       representing the coordinates of anchors in ymin, xmin, ymax, xmax order.
     weights: None or a list of four float numbers used to scale coordinates.
 
   Returns:
-    encoded_boxes: a tensor whose shape is the same as `boxes` representing the
+    decoded_boxes: a tensor whose shape is the same as `boxes` representing the
       decoded box targets.
   """
   if encoded_boxes.shape[-1] != 4:
@@ -382,10 +406,7 @@ def decode_boxes(encoded_boxes, anchors, weights=None):
 
   with tf.name_scope('decode_boxes'):
     encoded_boxes = tf.cast(encoded_boxes, dtype=anchors.dtype)
-    dy = encoded_boxes[..., 0:1]
-    dx = encoded_boxes[..., 1:2]
-    dh = encoded_boxes[..., 2:3]
-    dw = encoded_boxes[..., 3:4]
+    dy, dx, dh, dw = tf.split(encoded_boxes, 4, -1)
     if weights:
       dy /= weights[0]
       dx /= weights[1]
@@ -394,10 +415,8 @@ def decode_boxes(encoded_boxes, anchors, weights=None):
     dh = tf.math.minimum(dh, BBOX_XFORM_CLIP)
     dw = tf.math.minimum(dw, BBOX_XFORM_CLIP)
 
-    anchor_ymin = anchors[..., 0:1]
-    anchor_xmin = anchors[..., 1:2]
-    anchor_ymax = anchors[..., 2:3]
-    anchor_xmax = anchors[..., 3:4]
+    anchor_ymin, anchor_xmin, anchor_ymax, anchor_xmax = tf.split(
+        anchors, 4, -1)
     anchor_h = anchor_ymax - anchor_ymin
     anchor_w = anchor_xmax - anchor_xmin
     anchor_yc = anchor_ymin + 0.5 * anchor_h
@@ -421,7 +440,7 @@ def decode_boxes(encoded_boxes, anchors, weights=None):
 
 
 def filter_boxes(boxes, scores, image_shape, min_size_threshold):
-  """Filter and remove boxes that are too small or fall outside the image.
+  """Filters and remove boxes that are too small or fall outside the image.
 
   Args:
     boxes: a tensor whose last dimension is 4 representing the coordinates of
@@ -481,7 +500,7 @@ def filter_boxes(boxes, scores, image_shape, min_size_threshold):
 
 
 def filter_boxes_by_scores(boxes, scores, min_score_threshold):
-  """Filter and remove boxes whose scores are smaller than the threshold.
+  """Filters and remove boxes whose scores are smaller than the threshold.
 
   Args:
     boxes: a tensor whose last dimension is 4 representing the coordinates of
@@ -511,7 +530,7 @@ def filter_boxes_by_scores(boxes, scores, min_score_threshold):
 
 
 def gather_instances(selected_indices, instances, *aux_instances):
-  """Gather instances by indices.
+  """Gathers instances by indices.
 
   Args:
     selected_indices: a Tensor of shape [batch, K] which indicates the selected
@@ -559,7 +578,7 @@ def gather_instances(selected_indices, instances, *aux_instances):
 
 
 def top_k_boxes(boxes, scores, k):
-  """Sort and select top k boxes according to the scores.
+  """Sorts and select top k boxes according to the scores.
 
   Args:
     boxes: a tensor of shape [batch_size, N, 4] representing the coordinate of
@@ -581,7 +600,7 @@ def top_k_boxes(boxes, scores, k):
 
 
 def get_non_empty_box_indices(boxes):
-  """Get indices for non-empty boxes."""
+  """Gets indices for non-empty boxes."""
   # Selects indices if box height or width is 0.
   height = boxes[:, 2] - boxes[:, 0]
   width = boxes[:, 3] - boxes[:, 1]
@@ -716,8 +735,63 @@ def bbox_generalized_overlap(boxes, gt_boxes):
     return giou
 
 
+def bbox_intersection_over_area(boxes, gt_boxes):
+  """Calculates IoAs (intersection over area) between proposal and ground truth boxes.
+
+  Some `boxes` or `gt_boxes` may have been padded.  The returned `iou` tensor
+  for these boxes will be -1.
+
+  Args:
+    boxes: a tensor with a shape of [batch_size, N, 4]. N is the number of
+      proposals before groundtruth assignment (e.g., rpn_post_nms_topn). The
+      last dimension is the pixel coordinates in [ymin, xmin, ymax, xmax] form.
+    gt_boxes: a tensor with a shape of [batch_size, M, 4]. This tensor might
+      have paddings with a negative value.
+
+  Returns:
+    ioa: a tensor with as a shape of [batch_size, N, M].
+  """
+  with tf.name_scope('bbox_overlap'):
+    bb_y_min, bb_x_min, bb_y_max, bb_x_max = tf.split(
+        value=boxes, num_or_size_splits=4, axis=2
+    )
+    gt_y_min, gt_x_min, gt_y_max, gt_x_max = tf.split(
+        value=gt_boxes, num_or_size_splits=4, axis=2
+    )
+
+    # Calculates the intersection area.
+    i_xmin = tf.math.maximum(bb_x_min, tf.transpose(gt_x_min, [0, 2, 1]))
+    i_xmax = tf.math.minimum(bb_x_max, tf.transpose(gt_x_max, [0, 2, 1]))
+    i_ymin = tf.math.maximum(bb_y_min, tf.transpose(gt_y_min, [0, 2, 1]))
+    i_ymax = tf.math.minimum(bb_y_max, tf.transpose(gt_y_max, [0, 2, 1]))
+    i_area = tf.math.maximum((i_xmax - i_xmin), 0) * tf.math.maximum(
+        (i_ymax - i_ymin), 0
+    )
+
+    bb_area = (bb_y_max - bb_y_min) * (bb_x_max - bb_x_min)
+    ioa = tf.math.divide_no_nan(i_area, bb_area)
+
+    # Fills -1 for IoA entries between the padded ground truth boxes.
+    gt_invalid_mask = tf.less(
+        tf.reduce_max(gt_boxes, axis=-1, keepdims=True), 0.0
+    )
+    padding_mask = tf.logical_or(
+        tf.zeros_like(bb_x_min, dtype=tf.bool),
+        tf.transpose(gt_invalid_mask, [0, 2, 1]),
+    )
+    ioa = tf.where(padding_mask, -1., ioa)
+
+    # Fills -1 for invalid (-1) boxes.
+    boxes_invalid_mask = tf.less(
+        tf.reduce_max(boxes, axis=-1, keepdims=True), 0.0
+    )
+    ioa = tf.where(boxes_invalid_mask, -1., ioa)
+
+    return ioa
+
+
 def box_matching(boxes, gt_boxes, gt_classes):
-  """Match boxes to groundtruth boxes.
+  """Matches boxes to groundtruth boxes.
 
   Given the proposal boxes and the groundtruth boxes and classes, perform the
   groundtruth matching by taking the argmax of the IoU between boxes and

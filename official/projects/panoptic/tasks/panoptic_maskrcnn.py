@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,8 +23,9 @@ from official.core import task_factory
 from official.projects.panoptic.configs import panoptic_maskrcnn as exp_cfg
 from official.projects.panoptic.dataloaders import panoptic_maskrcnn_input
 from official.projects.panoptic.modeling import factory
+from official.vision.dataloaders import input_reader
 from official.vision.dataloaders import input_reader_factory
-from official.vision.evaluation import panoptic_quality_evaluator
+from official.vision.evaluation import panoptic_quality
 from official.vision.evaluation import segmentation_metrics
 from official.vision.losses import segmentation_losses
 from official.vision.tasks import maskrcnn
@@ -40,8 +41,17 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
   the loss, post-processing, and customized metrics with reduction.
   """
 
+  def __init__(self,
+               params,
+               logging_dir: Optional[str] = None,
+               name: Optional[str] = None):
+    super().__init__(params, logging_dir=logging_dir, name=name)
+    self.segmentation_train_mean_iou = None
+    self.segmentation_perclass_iou_metric = None
+    self.panoptic_quality_metric = None
+
   def build_model(self) -> tf.keras.Model:
-    """Build Panoptic Mask R-CNN model."""
+    """Builds Panoptic Mask R-CNN model."""
 
     input_specs = tf.keras.layers.InputSpec(
         shape=[None] + self.task_config.model.input_size)
@@ -61,10 +71,16 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
     if self.task_config.freeze_backbone:
       model.backbone.trainable = False
 
+    # Builds the model through warm-up call.
+    dummy_images = tf.keras.Input(self.task_config.model.input_size)
+    # Note that image_info is always in the shape of [4, 2].
+    dummy_image_info = tf.keras.layers.Input([4, 2])
+    _ = model(dummy_images, image_info=dummy_image_info, training=False)
+
     return model
 
   def initialize(self, model: tf.keras.Model) -> None:
-    """Loading pretrained checkpoint."""
+    """Loads pretrained checkpoint."""
 
     if not self.task_config.init_checkpoint:
       return
@@ -88,7 +104,18 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
       elif init_module == 'backbone':
         checkpoint_path = _get_checkpoint_path(
             self.task_config.init_checkpoint)
-        ckpt = tf.train.Checkpoint(backbone=model.backbone)
+
+        if self.task_config.model.backbone.type == 'uvit':
+          model.backbone.load_checkpoint(ckpt_filepath=checkpoint_path)
+        else:
+          ckpt = tf.train.Checkpoint(backbone=model.backbone)
+          status = ckpt.read(checkpoint_path)
+          status.expect_partial().assert_existing_objects_matched()
+
+      elif init_module == 'decoder':
+        checkpoint_path = _get_checkpoint_path(
+            self.task_config.init_checkpoint)
+        ckpt = tf.train.Checkpoint(decoder=model.decoder)
         status = ckpt.read(checkpoint_path)
         status.expect_partial().assert_existing_objects_matched()
 
@@ -110,8 +137,8 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
 
       else:
         raise ValueError(
-            "Only 'all', 'backbone', 'segmentation_backbone' and/or "
-            "segmentation_backbone' can be used to initialize the model, but "
+            "Only 'all', 'backbone', 'decoder', 'segmentation_backbone' and/or "
+            "'segmentation_decoder' can be used to initialize the model, but "
             "got {}".format(init_module))
       logging.info('Finished loading pretrained checkpoint from %s for %s',
                    checkpoint_path, init_module)
@@ -121,7 +148,7 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
       params: exp_cfg.DataConfig,
       input_context: Optional[tf.distribute.InputContext] = None
   ) -> tf.data.Dataset:
-    """Build input dataset."""
+    """Builds input dataset."""
     decoder_cfg = params.decoder.get()
     if params.decoder.type == 'simple_decoder':
       decoder = panoptic_maskrcnn_input.TfExampleDecoder(
@@ -140,16 +167,18 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
         num_scales=self.task_config.model.anchor.num_scales,
         aspect_ratios=self.task_config.model.anchor.aspect_ratios,
         anchor_size=self.task_config.model.anchor.anchor_size,
-        dtype=params.dtype,
         rpn_match_threshold=params.parser.rpn_match_threshold,
         rpn_unmatched_threshold=params.parser.rpn_unmatched_threshold,
         rpn_batch_size_per_im=params.parser.rpn_batch_size_per_im,
         rpn_fg_fraction=params.parser.rpn_fg_fraction,
         aug_rand_hflip=params.parser.aug_rand_hflip,
+        aug_rand_vflip=params.parser.aug_rand_vflip,
         aug_scale_min=params.parser.aug_scale_min,
         aug_scale_max=params.parser.aug_scale_max,
+        aug_type=params.parser.aug_type,
         skip_crowd_during_training=params.parser.skip_crowd_during_training,
         max_num_instances=params.parser.max_num_instances,
+        outer_boxes_scale=self.task_config.model.outer_boxes_scale,
         mask_crop_size=params.parser.mask_crop_size,
         segmentation_resize_eval_groundtruth=params.parser
         .segmentation_resize_eval_groundtruth,
@@ -157,13 +186,17 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
         .segmentation_groundtruth_padded_size,
         segmentation_ignore_label=params.parser.segmentation_ignore_label,
         panoptic_ignore_label=params.parser.panoptic_ignore_label,
-        include_panoptic_masks=params.parser.include_panoptic_masks)
+        include_panoptic_masks=params.parser.include_panoptic_masks,
+        dtype=params.dtype,
+    )
 
     reader = input_reader_factory.input_reader_generator(
         params,
         dataset_fn=dataset_fn.pick_dataset_fn(params.file_type),
         decoder_fn=decoder.decode,
-        parser_fn=parser.parse_fn(params.is_training))
+        combine_fn=input_reader.create_combine_fn(params),
+        parser_fn=parser.parse_fn(params.is_training),
+    )
     dataset = reader.read(input_context=input_context)
 
     return dataset
@@ -172,10 +205,11 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
                    outputs: Mapping[str, Any],
                    labels: Mapping[str, Any],
                    aux_losses: Optional[Any] = None) -> Dict[str, tf.Tensor]:
-    """Build Panoptic Mask R-CNN losses."""
+    """Builds Panoptic Mask R-CNN losses."""
     params = self.task_config.losses
 
-    use_groundtruth_dimension = params.semantic_segmentation_use_groundtruth_dimension
+    use_groundtruth_dimension = (
+        params.semantic_segmentation_use_groundtruth_dimension)
 
     segmentation_loss_fn = segmentation_losses.SegmentationLoss(
         label_smoothing=params.semantic_segmentation_label_smoothing,
@@ -183,12 +217,14 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
         ignore_label=params.semantic_segmentation_ignore_label,
         gt_is_matting_map=params.semantic_segmentation_gt_is_matting_map,
         use_groundtruth_dimension=use_groundtruth_dimension,
+        use_binary_cross_entropy=params
+        .semantic_segmentation_use_binary_cross_entropy,
         top_k_percent_pixels=params.semantic_segmentation_top_k_percent_pixels)
 
     instance_segmentation_weight = params.instance_segmentation_weight
     semantic_segmentation_weight = params.semantic_segmentation_weight
 
-    losses = super(PanopticMaskRCNNTask, self).build_losses(
+    losses = super().build_losses(
         outputs=outputs,
         labels=labels,
         aux_losses=None)
@@ -214,62 +250,51 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
     })
     return losses
 
-  def build_metrics(self, training: bool = True) -> List[
-      tf.keras.metrics.Metric]:
-    """Build detection metrics."""
-    metrics = []
-    num_segmentation_classes = self.task_config.model.segmentation_model.num_classes
+  def build_metrics(
+      self, training: bool = True
+  ) -> List[tf.keras.metrics.Metric]:
+    """Builds detection metrics."""
+    metrics = super().build_metrics(training)
+
     if training:
-      metric_names = [
-          'total_loss',
-          'rpn_score_loss',
-          'rpn_box_loss',
-          'frcnn_cls_loss',
-          'frcnn_box_loss',
-          'mask_loss',
-          'maskrcnn_loss',
-          'segmentation_loss',
-          'model_loss'
-      ]
+      metric_names = ['maskrcnn_loss', 'segmentation_loss']
       for name in metric_names:
         metrics.append(tf.keras.metrics.Mean(name, dtype=tf.float32))
 
       if self.task_config.segmentation_evaluation.report_train_mean_iou:
         self.segmentation_train_mean_iou = segmentation_metrics.MeanIoU(
             name='train_mean_iou',
-            num_classes=num_segmentation_classes,
+            num_classes=self.task_config.model.segmentation_model.num_classes,
             rescale_predictions=False,
-            dtype=tf.float32)
-
+            dtype=tf.float32,
+        )
     else:
-      self._build_coco_metrics()
-
-      rescale_predictions = (not self.task_config.validation_data.parser
-                             .segmentation_resize_eval_groundtruth)
-
+      rescale_predictions = (
+          not self.task_config.validation_data.parser.segmentation_resize_eval_groundtruth
+      )
       self.segmentation_perclass_iou_metric = segmentation_metrics.PerClassIoU(
           name='per_class_iou',
-          num_classes=num_segmentation_classes,
+          num_classes=self.task_config.model.segmentation_model.num_classes,
           rescale_predictions=rescale_predictions,
-          dtype=tf.float32)
+          dtype=tf.float32,
+      )
 
-      if isinstance(tf.distribute.get_strategy(), tf.distribute.TPUStrategy):
-        self._process_iou_metric_on_cpu = True
-      else:
-        self._process_iou_metric_on_cpu = False
-
-      if self.task_config.model.generate_panoptic_masks:
+      if (
+          self.task_config.model.generate_panoptic_masks
+          and self.task_config.panoptic_quality_evaluator is not None
+      ):
         if not self.task_config.validation_data.parser.include_panoptic_masks:
-          raise ValueError('`include_panoptic_masks` should be set to True when'
-                           ' computing panoptic quality.')
+          raise ValueError(
+              '`include_panoptic_masks` should be set to True when'
+              ' computing panoptic quality.'
+          )
         pq_config = self.task_config.panoptic_quality_evaluator
-        self.panoptic_quality_metric = panoptic_quality_evaluator.PanopticQualityEvaluator(
+        self.panoptic_quality_metric = panoptic_quality.PanopticQualityV2(
             num_categories=pq_config.num_categories,
-            ignored_label=pq_config.ignored_label,
-            max_instances_per_category=pq_config.max_instances_per_category,
-            offset=pq_config.offset,
             is_thing=pq_config.is_thing,
-            rescale_predictions=pq_config.rescale_predictions)
+            ignored_label=pq_config.ignored_label,
+            rescale_predictions=pq_config.rescale_predictions,
+        )
 
     return metrics
 
@@ -293,15 +318,18 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
     num_replicas = tf.distribute.get_strategy().num_replicas_in_sync
 
     with tf.GradientTape() as tape:
-      outputs = model(
-          images,
-          image_info=labels['image_info'],
-          anchor_boxes=labels['anchor_boxes'],
-          gt_boxes=labels['gt_boxes'],
-          gt_classes=labels['gt_classes'],
-          gt_masks=(labels['gt_masks'] if self.task_config.model.include_mask
-                    else None),
-          training=True)
+      model_kwargs = {
+          'image_info': labels['image_info'],
+          'anchor_boxes': labels['anchor_boxes'],
+          'gt_boxes': labels['gt_boxes'],
+          'gt_classes': labels['gt_classes'],
+          'training': True,
+      }
+      if self.task_config.model.include_mask:
+        model_kwargs['gt_masks'] = labels['gt_masks']
+        if self.task_config.model.outer_boxes_scale > 1.0:
+          model_kwargs['gt_outer_boxes'] = labels['gt_outer_boxes']
+      outputs = model(images, **model_kwargs)
       outputs = tf.nest.map_structure(
           lambda x: tf.cast(x, tf.float32), outputs)
 
@@ -328,7 +356,8 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
       for m in metrics:
         m.update_state(losses[m.name])
 
-    if self.task_config.segmentation_evaluation.report_train_mean_iou:
+    if (self.task_config.segmentation_evaluation.report_train_mean_iou and
+        self.segmentation_train_mean_iou is not None):
       segmentation_labels = {
           'masks': labels['gt_segmentation_mask'],
           'valid_masks': labels['gt_segmentation_valid_mask'],
@@ -345,10 +374,35 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
 
     return logs
 
-  def validation_step(self,
-                      inputs: Tuple[Any, Any],
-                      model: tf.keras.Model,
-                      metrics: Optional[List[Any]] = None) -> Dict[str, Any]:
+  def _update_metrics(self, labels, outputs, logs):
+    super()._update_metrics(labels, outputs, logs)
+
+    if self.segmentation_perclass_iou_metric is not None:
+      segmentation_labels = {
+          'masks': labels['groundtruths']['gt_segmentation_mask'],
+          'valid_masks': labels['groundtruths']['gt_segmentation_valid_mask'],
+          'image_info': labels['image_info'],
+      }
+      self.segmentation_perclass_iou_metric.update_state(
+          segmentation_labels, outputs['segmentation_outputs']
+      )
+
+    if self.panoptic_quality_metric is not None:
+      pq_metric_labels = {
+          'category_mask': labels['groundtruths']['gt_panoptic_category_mask'],
+          'instance_mask': labels['groundtruths']['gt_panoptic_instance_mask'],
+          'image_info': labels['image_info'],
+      }
+      self.panoptic_quality_metric.update_state(
+          pq_metric_labels, outputs['panoptic_outputs']
+      )
+
+  def validation_step(
+      self,
+      inputs: Tuple[Any, Any],
+      model: tf.keras.Model,
+      metrics: Optional[List[Any]] = None,
+  ) -> Dict[str, Any]:
     """Validatation step.
 
     Args:
@@ -365,99 +419,89 @@ class PanopticMaskRCNNTask(maskrcnn.MaskRCNNTask):
         images,
         anchor_boxes=labels['anchor_boxes'],
         image_info=labels['image_info'],
-        training=False)
+        training=False,
+    )
 
     logs = {self.loss: 0}
-    coco_model_outputs = {
-        'detection_masks': outputs['detection_masks'],
-        'detection_boxes': outputs['detection_boxes'],
-        'detection_scores': outputs['detection_scores'],
-        'detection_classes': outputs['detection_classes'],
-        'num_detections': outputs['num_detections'],
-        'source_id': labels['groundtruths']['source_id'],
-        'image_info': labels['image_info']
-    }
-    segmentation_labels = {
-        'masks': labels['groundtruths']['gt_segmentation_mask'],
-        'valid_masks': labels['groundtruths']['gt_segmentation_valid_mask'],
-        'image_info': labels['image_info']
-    }
-
-    logs.update(
-        {self.coco_metric.name: (labels['groundtruths'], coco_model_outputs)})
-    if self._process_iou_metric_on_cpu:
-      logs.update({
-          self.segmentation_perclass_iou_metric.name:
-              (segmentation_labels, outputs['segmentation_outputs'])
-      })
-    else:
-      self.segmentation_perclass_iou_metric.update_state(
-          segmentation_labels,
-          outputs['segmentation_outputs'])
-
-    if self.task_config.model.generate_panoptic_masks:
-      pq_metric_labels = {
-          'category_mask':
-              labels['groundtruths']['gt_panoptic_category_mask'],
-          'instance_mask':
-              labels['groundtruths']['gt_panoptic_instance_mask'],
-          'image_info': labels['image_info']
-            }
-      logs.update({
-          self.panoptic_quality_metric.name:
-              (pq_metric_labels, outputs['panoptic_outputs'])})
+    self._update_metrics(labels, outputs, logs)
     return logs
 
   def aggregate_logs(self, state=None, step_outputs=None):
-    if state is None:
-      self.coco_metric.reset_states()
-      self.segmentation_perclass_iou_metric.reset_states()
-      state = [self.coco_metric, self.segmentation_perclass_iou_metric]
-      if self.task_config.model.generate_panoptic_masks:
-        state += [self.panoptic_quality_metric]
+    is_first_step = not state
+    super().aggregate_logs(state, step_outputs)
 
-    self.coco_metric.update_state(
-        step_outputs[self.coco_metric.name][0],
-        step_outputs[self.coco_metric.name][1])
+    if is_first_step:
+      if not isinstance(state, list):
+        state = []
+      if self.segmentation_perclass_iou_metric is not None:
+        state.append(self.segmentation_perclass_iou_metric)
+      if self.panoptic_quality_metric is not None:
+        state.append(self.panoptic_quality_metric)
 
-    if self._process_iou_metric_on_cpu:
-      self.segmentation_perclass_iou_metric.update_state(
-          step_outputs[self.segmentation_perclass_iou_metric.name][0],
-          step_outputs[self.segmentation_perclass_iou_metric.name][1])
-
-    if self.task_config.model.generate_panoptic_masks:
-      self.panoptic_quality_metric.update_state(
-          step_outputs[self.panoptic_quality_metric.name][0],
-          step_outputs[self.panoptic_quality_metric.name][1])
-
+    if not state:
+      # Create an arbitrary state to indicate it's not the first step in the
+      # following calls to this function.
+      state = True
     return state
 
-  def reduce_aggregated_logs(self, aggregated_logs, global_step=None):
-    result = {}
-    result = super(
-        PanopticMaskRCNNTask, self).reduce_aggregated_logs(
-            aggregated_logs=aggregated_logs,
-            global_step=global_step)
-
+  def _reduce_semantic_metrics(self, logs: Dict[str, Any]):
+    """Updates the per class and mean semantic metrics in the logs."""
     ious = self.segmentation_perclass_iou_metric.result()
     if self.task_config.segmentation_evaluation.report_per_class_iou:
       for i, value in enumerate(ious.numpy()):
-        result.update({'segmentation_iou/class_{}'.format(i): value})
-    # Computes mean IoU
-    result.update({'segmentation_mean_iou': tf.reduce_mean(ious).numpy()})
+        logs.update({'segmentation_iou/class_{}'.format(i): value})
+    logs.update({'segmentation_mean_iou': tf.reduce_mean(ious)})
 
-    if self.task_config.model.generate_panoptic_masks:
-      report_per_class_metrics = self.task_config.panoptic_quality_evaluator.report_per_class_metrics
-      panoptic_quality_results = self.panoptic_quality_metric.result()
-      for k, value in panoptic_quality_results.items():
-        if k.endswith('per_class'):
-          if report_per_class_metrics:
-            for i, per_class_value in enumerate(value):
-              metric_key = 'panoptic_quality/{}/class_{}'.format(k, i)
-              result[metric_key] = per_class_value
-          else:
-            continue
-        else:
-          result['panoptic_quality/{}'.format(k)] = value
+  def _reduce_panoptic_metrics(self, logs: Dict[str, Any]):
+    """Updates the per class and mean panoptic metrics in the logs."""
+    result = self.panoptic_quality_metric.result()
+    valid_thing_classes = result['valid_thing_classes']
+    valid_stuff_classes = result['valid_stuff_classes']
+    valid_classes = valid_stuff_classes | valid_thing_classes
+    num_categories = tf.math.count_nonzero(valid_classes, dtype=tf.float32)
+    num_thing_categories = tf.math.count_nonzero(
+        valid_thing_classes, dtype=tf.float32
+    )
+    num_stuff_categories = tf.math.count_nonzero(
+        valid_stuff_classes, dtype=tf.float32
+    )
+    valid_thing_classes = tf.cast(valid_thing_classes, dtype=tf.float32)
+    valid_stuff_classes = tf.cast(valid_stuff_classes, dtype=tf.float32)
 
-    return result
+    logs['panoptic_quality/All_num_categories'] = num_categories
+    logs['panoptic_quality/Things_num_categories'] = num_thing_categories
+    logs['panoptic_quality/Stuff_num_categories'] = num_stuff_categories
+    for metric in ['pq', 'sq', 'rq']:
+      metric_per_class = result[f'{metric}_per_class']
+      logs[f'panoptic_quality/All_{metric}'] = tf.math.divide_no_nan(
+          tf.reduce_sum(metric_per_class), num_categories
+      )
+      logs[f'panoptic_quality/Things_{metric}'] = tf.math.divide_no_nan(
+          tf.reduce_sum(metric_per_class * valid_thing_classes),
+          num_thing_categories,
+      )
+      logs[f'panoptic_quality/Stuff_{metric}'] = tf.math.divide_no_nan(
+          tf.reduce_sum(metric_per_class * valid_stuff_classes),
+          num_stuff_categories,
+      )
+      if self.task_config.panoptic_quality_evaluator.report_per_class_metrics:
+        for i, is_valid in enumerate(valid_classes.numpy()):
+          if is_valid:
+            logs[f'panoptic_quality/{metric}/class_{i}'] = metric_per_class[i]
+
+  def reduce_aggregated_logs(
+      self,
+      aggregated_logs: Dict[str, Any],
+      global_step: Optional[tf.Tensor] = None,
+  ) -> Dict[str, tf.Tensor]:
+    """Optional reduce of aggregated logs over validation steps."""
+    logs = super().reduce_aggregated_logs(aggregated_logs, global_step)
+
+    if self.segmentation_perclass_iou_metric is not None:
+      self._reduce_semantic_metrics(logs)
+      self.segmentation_perclass_iou_metric.reset_state()
+    if self.panoptic_quality_metric is not None:
+      self._reduce_panoptic_metrics(logs)
+      self.panoptic_quality_metric.reset_state()
+
+    return logs

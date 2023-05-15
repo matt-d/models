@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ class RetinaNetModel(tf.keras.Model):
                aspect_ratios: Optional[List[float]] = None,
                anchor_size: Optional[float] = None,
                **kwargs):
-    """Classification initialization function.
+    """Detection initialization function.
 
     Args:
       backbone: `tf.keras.Model` a backbone network.
@@ -173,18 +173,30 @@ class RetinaNetModel(tf.keras.Model):
           'cls_outputs': raw_scores,
           'box_outputs': raw_boxes,
       })
+
+      def _update_decoded_results():
+        outputs.update({
+            'decoded_boxes': final_results['decoded_boxes'],
+            'decoded_box_scores': final_results['decoded_box_scores'],
+        })
+        if final_results.get('decoded_box_attributes') is not None:
+          outputs['decoded_box_attributes'] = final_results[
+              'decoded_box_attributes'
+          ]
+
       if self.detection_generator.get_config()['apply_nms']:
         outputs.update({
             'detection_boxes': final_results['detection_boxes'],
             'detection_scores': final_results['detection_scores'],
             'detection_classes': final_results['detection_classes'],
-            'num_detections': final_results['num_detections']
+            'num_detections': final_results['num_detections'],
         })
+        # Users can choose to include the decoded results (boxes before NMS) in
+        # the output tensor dict even if `apply_nms` is set to `True`.
+        if self.detection_generator.get_config()['return_decoded']:
+          _update_decoded_results()
       else:
-        outputs.update({
-            'decoded_boxes': final_results['decoded_boxes'],
-            'decoded_box_scores': final_results['decoded_box_scores']
-        })
+        _update_decoded_results()
 
       if raw_attributes:
         outputs.update({

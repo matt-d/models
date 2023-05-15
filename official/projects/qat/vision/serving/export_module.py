@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Export modules for QAT model serving/inference."""
-from absl import logging
 import tensorflow as tf
 
 from official.projects.qat.vision.modeling import factory as qat_factory
@@ -50,11 +49,6 @@ class DetectionModule(detection.DetectionModule):
   """Detection Module."""
 
   def _build_model(self):
-    if self.params.task.model.detection_generator.nms_version != 'tflite':
-      self.params.task.model.detection_generator.nms_version = 'tflite'
-      logging.info('Set `nms_version` to `tflite` because only TFLite NMS is '
-                   'supported for QAT detection models.')
-
     model = super()._build_model()
 
     if isinstance(self.params.task.model, configs.retinanet.RetinaNet):

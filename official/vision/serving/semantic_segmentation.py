@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,10 +21,6 @@ from official.vision.ops import preprocess_ops
 from official.vision.serving import export_base
 
 
-MEAN_RGB = (0.485 * 255, 0.456 * 255, 0.406 * 255)
-STDDEV_RGB = (0.229 * 255, 0.224 * 255, 0.225 * 255)
-
-
 class SegmentationModule(export_base.ExportModule):
   """Segmentation Module."""
 
@@ -41,9 +37,8 @@ class SegmentationModule(export_base.ExportModule):
     """Builds classification model inputs for serving."""
 
     # Normalizes image with mean and std pixel values.
-    image = preprocess_ops.normalize_image(image,
-                                           offset=MEAN_RGB,
-                                           scale=STDDEV_RGB)
+    image = preprocess_ops.normalize_image(
+        image, offset=preprocess_ops.MEAN_RGB, scale=preprocess_ops.STDDEV_RGB)
 
     if self.params.task.train_data.preserve_aspect_ratio:
       image, image_info = preprocess_ops.resize_and_crop_image(

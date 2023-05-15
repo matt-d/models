@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -171,6 +171,17 @@ UpSampling2DQuantized = quantize_wrapped_layer(
                                                                     True))
 ReshapeQuantized = quantize_wrapped_layer(
     tf.keras.layers.Reshape, configs.Default8BitQuantizeConfig([], [], True))
+DenseQuantized = quantize_wrapped_layer(
+    tf.keras.layers.Dense,
+    configs.Default8BitQuantizeConfig(['kernel'], ['activation'], False),
+)
+DenseOutputQuantized = quantize_wrapped_layer(
+    tf.keras.layers.Dense,
+    configs.Default8BitQuantizeConfig(['kernel'], ['activation'], True),
+)
+IdentityQuantized = quantize_wrapped_layer(
+    tf.keras.layers.Identity, configs.Default8BitQuantizeConfig([], [], True)
+)
 
 # pylint:disable=g-long-lambda
 BatchNormalizationQuantized = lambda norm_layer: quantize_wrapped_layer(

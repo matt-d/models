@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ class FNet(tf.keras.layers.Layer):
   This implementation defaults to the canonical FNet Base model, but the network
   also supports more general mixing models (e.g. 'Linear', 'HNet') and hybrid
   models (e.g. 'FNet-Hybrid') models that use both mixing and self-attention
-  layers.
+  layers. The input length is fixed to 'max_sequence_length'.
 
   Args:
     vocab_size: The size of the token vocabulary.
@@ -51,7 +51,7 @@ class FNet(tf.keras.layers.Layer):
     num_layers: The number of transformer layers.
     mixing_mechanism: Type of mixing mechanism used in place of self-attention
       layers. Defaults to FNet ('Fourier') mixing.
-    use_fft: Only used for spectral mixing mechanims. Determines whether to use
+    use_fft: Only used for spectral mixing mechanisms. Determines whether to use
       Fast Fourier Transform (True) or the Discrete Fourier Transform (DFT)
       matrix (False; default) to compute the Fourier Transform. See
       layers.FourierTransformLayer or layers.HartleyTransformLayer for advice.
@@ -61,8 +61,9 @@ class FNet(tf.keras.layers.Layer):
       good rule of thumb is to place them in the final few layers.
     num_attention_heads: The number of attention heads for each transformer. The
       hidden size must be divisible by the number of attention heads.
-    max_sequence_length: The maximum sequence length that this encoder can
-      consume. This determines the variable shape for positional embeddings.
+    max_sequence_length: The only sequence length that this encoder can
+      consume. This determines the variable shape for positional embeddings and
+      the size of the mixing matrices.
     type_vocab_size: The number of types that the 'type_ids' input can take.
     inner_dim: The output dimension of the first Dense layer in a two-layer
       feedforward network for each transformer.
@@ -220,6 +221,8 @@ class FNet(tf.keras.layers.Layer):
 
     if with_dense_inputs:
       self.inputs = dict(
+          # The total length of token ids and dense inputs still has to be
+          # max_sequence_length. It is checked in call().
           input_word_ids=tf.keras.Input(shape=(None,), dtype=tf.int32),
           input_mask=tf.keras.Input(shape=(None,), dtype=tf.int32),
           input_type_ids=tf.keras.Input(shape=(None,), dtype=tf.int32),
@@ -228,11 +231,16 @@ class FNet(tf.keras.layers.Layer):
           dense_mask=tf.keras.Input(shape=(None,), dtype=tf.int32),
           dense_type_ids=tf.keras.Input(shape=(None,), dtype=tf.int32),
       )
+
     else:
       self.inputs = dict(
-          input_word_ids=tf.keras.Input(shape=(None,), dtype=tf.int32),
-          input_mask=tf.keras.Input(shape=(None,), dtype=tf.int32),
-          input_type_ids=tf.keras.Input(shape=(None,), dtype=tf.int32))
+          input_word_ids=tf.keras.Input(
+              shape=(max_sequence_length,), dtype=tf.int32),
+          input_mask=tf.keras.Input(
+              shape=(max_sequence_length,), dtype=tf.int32),
+          input_type_ids=tf.keras.Input(
+              shape=(max_sequence_length,), dtype=tf.int32))
+    self._max_sequence_length = max_sequence_length
 
   def call(self, inputs):
     word_embeddings = None
@@ -257,6 +265,10 @@ class FNet(tf.keras.layers.Layer):
       word_embeddings = tf.concat([word_embeddings, dense_inputs], axis=1)
       type_ids = tf.concat([type_ids, dense_type_ids], axis=1)
       mask = tf.concat([mask, dense_mask], axis=1)
+
+    # FNet: Sequence length must be the same as `max_sequence_length`.
+    word_embeddings = tf.ensure_shape(word_embeddings,
+                                      [None, self._max_sequence_length, None])
 
     # Absolute position embeddings.
     position_embeddings = self._position_embedding_layer(word_embeddings)

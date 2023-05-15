@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,9 +23,11 @@ from official.core import exp_factory
 from official.modeling import hyperparams
 from official.modeling import optimization
 from official.projects.deepmac_maskrcnn.configs import deep_mask_head_rcnn as deepmac_maskrcnn
+from official.projects.uvit.configs import backbones as uvit_backbones
 from official.vision.configs import common
 from official.vision.configs import maskrcnn
 from official.vision.configs import semantic_segmentation
+from official.vision.configs.google import backbones
 
 
 SEGMENTATION_MODEL = semantic_segmentation.SemanticSegmentationModel
@@ -36,6 +38,7 @@ _COCO_TRAIN_EXAMPLES = 118287
 _COCO_VAL_EXAMPLES = 5000
 
 # pytype: disable=wrong-keyword-args
+# pylint: disable=unexpected-keyword-arg
 
 
 @dataclasses.dataclass
@@ -92,11 +95,23 @@ class PanopticSegmentationGenerator(hyperparams.Config):
 
 
 @dataclasses.dataclass
+class Backbone(backbones.Backbone):
+  """Configuration for backbones.
+
+  Attributes:
+    type: "str", type of backbone be used, one the of fields below.
+    uvit: uvit backbone config.
+  """
+  type: Optional[str] = None
+  uvit: uvit_backbones.VisionTransformer = uvit_backbones.VisionTransformer()
+
+
+@dataclasses.dataclass
 class PanopticMaskRCNN(deepmac_maskrcnn.DeepMaskHeadRCNN):
   """Panoptic Mask R-CNN model config."""
-  segmentation_model: semantic_segmentation.SemanticSegmentationModel = (
-      SEGMENTATION_MODEL(num_classes=2))
-  include_mask = True
+  backbone: Backbone = Backbone(type='resnet', resnet=backbones.ResNet())
+  segmentation_model: SEGMENTATION_MODEL = SEGMENTATION_MODEL(num_classes=2)
+  include_mask: bool = True
   shared_backbone: bool = True
   shared_decoder: bool = True
   stuff_classes_offset: int = 0
@@ -113,6 +128,9 @@ class Losses(maskrcnn.Losses):
   semantic_segmentation_class_weights: List[float] = dataclasses.field(
       default_factory=list)
   semantic_segmentation_use_groundtruth_dimension: bool = True
+  # If true, use binary cross entropy (sigmoid) in loss, otherwise, use
+  # categorical cross entropy (softmax).
+  semantic_segmentation_use_binary_cross_entropy: bool = False
   semantic_segmentation_top_k_percent_pixels: float = 1.0
   instance_segmentation_weight: float = 1.0
   semantic_segmentation_weight: float = 0.5

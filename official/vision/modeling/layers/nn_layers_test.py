@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -413,6 +413,20 @@ class NNLayersTest(parameterized.TestCase, tf.test.TestCase):
         pool_kernel_size=pool_kernel_size)
     output = layer(inputs)
     self.assertAllEqual([None, 64, 64, 256], output.shape)
+
+  @parameterized.parameters(None, 2)
+  def test_multi_head_attention(self, max_inference_parallelism):
+    layer = nn_layers.MultiHeadAttention(
+        num_heads=12,
+        key_dim=64,
+        max_inference_parallelism=max_inference_parallelism,
+    )
+    # Create a 3-dimensional input (the first dimension is implicit).
+    query = tf.keras.Input(shape=(40, 80))
+    value = tf.keras.Input(shape=(20, 80))
+    output = layer(query=query, value=value)
+    self.assertEqual(output.shape.as_list(), [None, 40, 80])
+
 
 if __name__ == '__main__':
   tf.test.main()

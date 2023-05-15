@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ class SpectralNormalization(tf.keras.layers.Wrapper):
     super().__init__(
         layer, name=wrapper_name, **kwargs)
 
-  def build(self, input_shape):
+  def build(self, input_shape):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     super().build(input_shape)
     self.layer.kernel._aggregation = self.aggregation  # pylint: disable=protected-access
     self._dtype = self.layer.kernel.dtype
@@ -195,7 +195,7 @@ class SpectralNormalizationConv2D(tf.keras.layers.Wrapper):
           .format(input=layer))
     super().__init__(layer, **kwargs)
 
-  def build(self, input_shape):
+  def build(self, input_shape):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     if not self.layer.built:
       self.layer.build(input_shape)
     self.layer.kernel._aggregation = self.aggregation  # pylint: disable=protected-access

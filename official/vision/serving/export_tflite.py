@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -89,12 +89,24 @@ _DENYLISTED_OPS = flags.DEFINE_string(
 def main(_) -> None:
   params = exp_factory.get_exp_config(_EXPERIMENT.value)
   if _CONFIG_FILE.value is not None:
-    for config_file in _CONFIG_FILE.value:
-      params = hyperparams.override_params_dict(
-          params, config_file, is_strict=True)
+    for config_file in _CONFIG_FILE.value or []:
+      try:
+        params = hyperparams.override_params_dict(
+            params, config_file, is_strict=True
+        )
+      except KeyError:
+        params = hyperparams.override_params_dict(
+            params, config_file, is_strict=False
+        )
   if _PARAMS_OVERRIDE.value:
-    params = hyperparams.override_params_dict(
-        params, _PARAMS_OVERRIDE.value, is_strict=True)
+    try:
+      params = hyperparams.override_params_dict(
+          params, _PARAMS_OVERRIDE.value, is_strict=True
+      )
+    except KeyError:
+      params = hyperparams.override_params_dict(
+          params, _PARAMS_OVERRIDE.value, is_strict=False
+      )
 
   params.validate()
   params.lock()

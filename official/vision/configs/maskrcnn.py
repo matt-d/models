@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 import dataclasses
 import os
-from typing import List, Optional, Union
+from typing import List, Optional, Sequence, Union
 
 from official.core import config_definitions as cfg
 from official.core import exp_factory
@@ -34,6 +34,7 @@ class Parser(hyperparams.Config):
   match_threshold: float = 0.5
   unmatched_threshold: float = 0.5
   aug_rand_hflip: bool = False
+  aug_rand_vflip: bool = False
   aug_scale_min: float = 1.0
   aug_scale_max: float = 1.0
   aug_type: Optional[
@@ -50,7 +51,8 @@ class Parser(hyperparams.Config):
 @dataclasses.dataclass
 class DataConfig(cfg.DataConfig):
   """Input config for training."""
-  input_path: str = ''
+  input_path: Union[Sequence[str], str, hyperparams.Config] = ''
+  weights: Optional[hyperparams.Config] = None
   global_batch_size: int = 0
   is_training: bool = False
   dtype: str = 'bfloat16'
@@ -135,6 +137,7 @@ class DetectionGenerator(hyperparams.Config):
   nms_version: str = 'v2'  # `v2`, `v1`, `batched`
   use_cpu_nms: bool = False
   soft_nms_sigma: Optional[float] = None  # Only works when nms_version='v1'.
+  use_sigmoid_probability: bool = False
 
 
 @dataclasses.dataclass
@@ -165,6 +168,7 @@ class MaskRCNN(hyperparams.Config):
   max_level: int = 6
   anchor: Anchor = Anchor()
   include_mask: bool = True
+  outer_boxes_scale: float = 1.0
   backbone: backbones.Backbone = backbones.Backbone(
       type='resnet', resnet=backbones.ResNet())
   decoder: decoders.Decoder = decoders.Decoder(
@@ -189,6 +193,8 @@ class Losses(hyperparams.Config):
   loss_weight: float = 1.0
   rpn_huber_loss_delta: float = 1. / 9.
   frcnn_huber_loss_delta: float = 1.
+  frcnn_class_use_binary_cross_entropy: bool = False
+  frcnn_class_loss_top_k_percent: float = 1.
   l2_weight_decay: float = 0.0
   rpn_score_weight: float = 1.0
   rpn_box_weight: float = 1.0
@@ -215,6 +221,9 @@ class MaskRCNNTask(cfg.TaskConfig):
   use_coco_metrics: bool = True
   # If set, the Waymo Open Dataset evaluator would be used.
   use_wod_metrics: bool = False
+  # If set, use instance metrics (AP, mask AP, etc.) computed by an efficient
+  # approximation algorithm with TPU compatible operations.
+  use_approx_instance_metrics: bool = False
 
   # If set, freezes the backbone during training.
   # TODO(crisnv) Add paper link when available.

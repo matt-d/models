@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ class FNetTest(parameterized.TestCase, tf.test.TestCase):
         vocab_size=100,
         hidden_size=hidden_size,
         num_attention_heads=2,
+        max_sequence_length=sequence_length,
         num_layers=num_layers,
         mixing_mechanism=mixing_mechanism,
         attention_layers=attention_layers)
@@ -81,6 +82,7 @@ class FNetTest(parameterized.TestCase, tf.test.TestCase):
         vocab_size=100,
         hidden_size=hidden_size,
         num_attention_heads=2,
+        max_sequence_length=sequence_length,
         num_layers=3)
 
     # Create the inputs (note that the first dimension is implicit).

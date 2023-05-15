@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -193,10 +193,14 @@ class BertEncoderV2(tf.keras.layers.Layer):
         'max_sequence_length': max_sequence_length,
         'type_vocab_size': type_vocab_size,
         'inner_dim': inner_dim,
-        'inner_activation': tf.keras.activations.serialize(activation),
+        'inner_activation': tf_utils.serialize_activation(
+            activation, use_legacy_format=True
+        ),
         'output_dropout': output_dropout,
         'attention_dropout': attention_dropout,
-        'initializer': tf.keras.initializers.serialize(initializer),
+        'initializer': tf_utils.serialize_initializer(
+            initializer, use_legacy_format=True
+        ),
         'output_range': output_range,
         'embedding_width': embedding_width,
         'embedding_layer': embedding_layer,
@@ -238,16 +242,10 @@ class BertEncoderV2(tf.keras.layers.Layer):
       word_embeddings = self._embedding_layer(word_ids)
 
     if dense_inputs is not None:
-      # Concat the dense embeddings at sequence end.
-      word_embeddings = tf.concat([word_embeddings, dense_inputs], axis=1)
-      type_ids = tf.concat([type_ids, dense_type_ids], axis=1)
       mask = tf.concat([mask, dense_mask], axis=1)
 
-    # absolute position embeddings.
-    position_embeddings = self._position_embedding_layer(word_embeddings)
-    type_embeddings = self._type_embedding_layer(type_ids)
-
-    embeddings = word_embeddings + position_embeddings + type_embeddings
+    embeddings = self._get_embeddings(word_ids, type_ids, word_embeddings,
+                                      dense_inputs, dense_type_ids)
     embeddings = self._embedding_norm_layer(embeddings)
     embeddings = self._embedding_dropout(embeddings)
 
@@ -312,6 +310,24 @@ class BertEncoderV2(tf.keras.layers.Layer):
       logging.warn(warn_string)
 
     return cls(**config)
+
+  def _get_embeddings(self, word_ids: tf.Tensor, type_ids: tf.Tensor,
+                      word_embeddings: Optional[tf.Tensor],
+                      dense_inputs: Optional[tf.Tensor],
+                      dense_type_ids: Optional[tf.Tensor]) -> tf.Tensor:
+    if word_embeddings is None:
+      word_embeddings = self._embedding_layer(word_ids)
+
+    if dense_inputs is not None:
+      # Concat the dense embeddings at sequence end.
+      word_embeddings = tf.concat([word_embeddings, dense_inputs], axis=1)
+      type_ids = tf.concat([type_ids, dense_type_ids], axis=1)
+
+    type_embeddings = self._type_embedding_layer(type_ids)
+
+    # absolute position embeddings.
+    position_embeddings = self._position_embedding_layer(word_embeddings)
+    return word_embeddings + position_embeddings + type_embeddings
 
 
 @tf.keras.utils.register_keras_serializable(package='Text')
@@ -556,10 +572,14 @@ class BertEncoder(tf.keras.Model):
         'max_sequence_length': max_sequence_length,
         'type_vocab_size': type_vocab_size,
         'inner_dim': inner_dim,
-        'inner_activation': tf.keras.activations.serialize(activation),
+        'inner_activation': tf_utils.serialize_activation(
+            activation, use_legacy_format=True
+        ),
         'output_dropout': output_dropout,
         'attention_dropout': attention_dropout,
-        'initializer': tf.keras.initializers.serialize(initializer),
+        'initializer': tf_utils.serialize_initializer(
+            initializer, use_legacy_format=True
+        ),
         'output_range': output_range,
         'embedding_width': embedding_width,
         'embedding_layer': embedding_layer,
@@ -604,4 +624,3 @@ class BertEncoder(tf.keras.Model):
       logging.warn(warn_string)
 
     return cls(**config)
-

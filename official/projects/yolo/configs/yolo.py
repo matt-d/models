@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,6 +83,7 @@ class DataDecoder(hyperparams.OneOfConfig):
 @dataclasses.dataclass
 class Mosaic(hyperparams.Config):
   mosaic_frequency: float = 0.0
+  mosaic9_frequency: float = 0.0
   mixup_frequency: float = 0.0
   mosaic_center: float = 0.2
   mosaic_crop_mode: Optional[str] = None
@@ -120,7 +121,6 @@ class DataConfig(cfg.DataConfig):
   input_path: str = ''
   tfds_name: str = ''
   tfds_split: str = ''
-  global_batch_size: int = 1
   is_training: bool = True
   dtype: str = 'float16'
   decoder: DataDecoder = DataDecoder()
@@ -146,11 +146,14 @@ class YoloDetectionGenerator(hyperparams.Config):
       default_factory=_build_dict(MIN_LEVEL, MAX_LEVEL, 1.0))
   path_scales: FPNConfig = dataclasses.field(
       default_factory=_build_path_scales(MIN_LEVEL, MAX_LEVEL))
-  nms_type: str = 'greedy'
+  # Choose from v1, v2, iou and greedy.
+  nms_version: str = 'greedy'
   iou_thresh: float = 0.001
   nms_thresh: float = 0.6
   max_boxes: int = 200
   pre_nms_points: int = 5000
+  # Only works when nms_version='v2'.
+  use_class_agnostic_nms: Optional[bool] = False
 
 
 @dataclasses.dataclass
@@ -178,7 +181,7 @@ class YoloLoss(hyperparams.Config):
 
 @dataclasses.dataclass
 class Box(hyperparams.Config):
-  box: List[int] = dataclasses.field(default=list)
+  box: List[int] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -256,6 +259,8 @@ class YoloTask(cfg.TaskConfig):
       str, List[str]] = 'all'  # all, backbone, and/or decoder
   gradient_clip_norm: float = 0.0
   seed = GLOBAL_SEED
+  # Sets maximum number of boxes to be evaluated by coco eval api.
+  max_num_eval_detections: int = 100
 
 
 COCO_INPUT_PATH_BASE = 'coco'
@@ -399,7 +404,7 @@ def yolo_darknet() -> cfg.ExperimentConfig:
 def scaled_yolo() -> cfg.ExperimentConfig:
   """COCO object detection with YOLOv4-csp and v4."""
   train_batch_size = 256
-  eval_batch_size = 8
+  eval_batch_size = 256
   train_epochs = 300
   warmup_epochs = 3
 
@@ -413,8 +418,8 @@ def scaled_yolo() -> cfg.ExperimentConfig:
       task=YoloTask(
           smart_bias_lr=0.1,
           init_checkpoint_modules='',
-          annotation_file=None,
           weight_decay=0.0,
+          annotation_file=None,
           model=Yolo(
               darknet_based_model=False,
               norm_activation=common.NormActivation(
@@ -462,7 +467,7 @@ def scaled_yolo() -> cfg.ExperimentConfig:
               input_path=os.path.join(COCO_INPUT_PATH_BASE, 'val*'),
               is_training=False,
               global_batch_size=eval_batch_size,
-              drop_remainder=True,
+              drop_remainder=False,
               dtype='float32',
               parser=Parser(
                   letter_box=True,
@@ -474,7 +479,7 @@ def scaled_yolo() -> cfg.ExperimentConfig:
               ))),
       trainer=cfg.TrainerConfig(
           train_steps=train_epochs * steps_per_epoch,
-          validation_steps=COCO_VAL_EXAMPLES // eval_batch_size,
+          validation_steps=20,
           validation_interval=validation_interval * steps_per_epoch,
           steps_per_loop=steps_per_epoch,
           summary_interval=steps_per_epoch,

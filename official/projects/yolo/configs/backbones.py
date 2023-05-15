@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,5 +32,13 @@ class Darknet(hyperparams.Config):
 
 
 @dataclasses.dataclass
+class YoloV7(hyperparams.Config):
+  model_id: str = 'yolov7'
+  min_level: int = 3
+  max_level: int = 5
+
+
+@dataclasses.dataclass
 class Backbone(backbones.Backbone):
   darknet: Darknet = Darknet()
+  yolov7: YoloV7 = YoloV7()

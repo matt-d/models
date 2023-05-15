@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,6 +50,12 @@ class PanopticDeeplabTask(base_task.Task):
         input_specs=input_specs,
         model_config=self.task_config.model,
         l2_regularizer=l2_regularizer)
+
+    # Builds the model through warm-up call.
+    dummy_images = tf.keras.Input(self.task_config.model.input_size)
+    # Note that image_info is always in the shape of [4, 2].
+    dummy_image_info = tf.keras.layers.Input([4, 2])
+    _ = model(dummy_images, dummy_image_info, training=False)
     return model
 
   def initialize(self, model: tf.keras.Model):
@@ -133,11 +139,12 @@ class PanopticDeeplabTask(base_task.Task):
       The total loss tensor.
     """
     loss_config = self._task_config.losses
-    segmentation_loss_fn = panoptic_deeplab_losses.WeightedBootstrappedCrossEntropyLoss(
-        loss_config.label_smoothing,
-        loss_config.class_weights,
-        loss_config.ignore_label,
-        top_k_percent_pixels=loss_config.top_k_percent_pixels)
+    segmentation_loss_fn = (
+        panoptic_deeplab_losses.WeightedBootstrappedCrossEntropyLoss(
+            loss_config.label_smoothing,
+            loss_config.class_weights,
+            loss_config.ignore_label,
+            top_k_percent_pixels=loss_config.top_k_percent_pixels))
     instance_center_heatmap_loss_fn = panoptic_deeplab_losses.CenterHeatmapLoss(
     )
     instance_center_offset_loss_fn = panoptic_deeplab_losses.CenterOffsetLoss()
@@ -214,24 +221,16 @@ class PanopticDeeplabTask(base_task.Task):
           rescale_predictions=rescale_predictions,
           dtype=tf.float32)
 
-      if isinstance(tf.distribute.get_strategy(), tf.distribute.TPUStrategy):
-        self._process_iou_metric_on_cpu = True
-      else:
-        self._process_iou_metric_on_cpu = False
-
       if self.task_config.model.generate_panoptic_masks:
-        self.panoptic_quality_metric = panoptic_quality_evaluator.PanopticQualityEvaluator(
-            num_categories=self.task_config.model.num_classes,
-            ignored_label=eval_config.ignored_label,
-            max_instances_per_category=eval_config.max_instances_per_category,
-            offset=eval_config.offset,
-            is_thing=eval_config.is_thing,
-            rescale_predictions=eval_config.rescale_predictions)
-
-    # Update state on CPU if TPUStrategy due to dynamic resizing.
-    self._process_iou_metric_on_cpu = isinstance(
-        tf.distribute.get_strategy(),
-        tf.distribute.TPUStrategy)
+        self.panoptic_quality_metric = (
+            panoptic_quality_evaluator.PanopticQualityEvaluator(
+                num_categories=self.task_config.model.num_classes,
+                ignored_label=eval_config.ignored_label,
+                max_instances_per_category=eval_config
+                .max_instances_per_category,
+                offset=eval_config.offset,
+                is_thing=eval_config.is_thing,
+                rescale_predictions=eval_config.rescale_predictions))
 
     return metrics
 
@@ -334,22 +333,13 @@ class PanopticDeeplabTask(base_task.Task):
         'image_info': labels['image_info']
     }
 
-    if self._process_iou_metric_on_cpu:
-      logs.update({
-          self.perclass_iou_metric.name:
-              (segmentation_labels, outputs['segmentation_outputs'])
-      })
-    else:
-      self.perclass_iou_metric.update_state(
-          segmentation_labels,
-          outputs['segmentation_outputs'])
+    self.perclass_iou_metric.update_state(segmentation_labels,
+                                          outputs['segmentation_outputs'])
 
     if self.task_config.model.generate_panoptic_masks:
       pq_metric_labels = {
-          'category_mask':
-              tf.squeeze(labels['category_mask'], axis=3),
-          'instance_mask':
-              tf.squeeze(labels['instance_mask'], axis=3),
+          'category_mask': tf.squeeze(labels['category_mask'], axis=3),
+          'instance_mask': tf.squeeze(labels['instance_mask'], axis=3),
           'image_info': labels['image_info']
       }
       panoptic_outputs = {
@@ -369,11 +359,6 @@ class PanopticDeeplabTask(base_task.Task):
       state = [self.perclass_iou_metric]
       if self.task_config.model.generate_panoptic_masks:
         state += [self.panoptic_quality_metric]
-
-    if self._process_iou_metric_on_cpu:
-      self.perclass_iou_metric.update_state(
-          step_outputs[self.perclass_iou_metric.name][0],
-          step_outputs[self.perclass_iou_metric.name][1])
 
     if self.task_config.model.generate_panoptic_masks:
       self.panoptic_quality_metric.update_state(

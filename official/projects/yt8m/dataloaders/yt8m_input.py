@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -284,7 +284,7 @@ class Decoder(decoder.Decoder):
         self._context_features[name] = feature_type
       else:
         raise ValueError(
-            f"Unknow feature source {self._feature_sources[i]} for {name}")
+            f"Unknown feature source {self._feature_sources[i]} for {name}")
 
   def _add_labels_specification(self):
     if not self._label_field:
@@ -295,12 +295,10 @@ class Decoder(decoder.Decoder):
   def decode(self,
              serialized_example: tf.train.SequenceExample) -> Dict[str, Any]:
     """Parses a single tf.train.SequenceExample into video and label tensors."""
-
     contexts, features = tf.io.parse_single_sequence_example(
         serialized_example,
         context_features=self._context_features,
         sequence_features=self._sequence_features)
-
     decoded_tensor = {**contexts, **features}
     for i, name in enumerate(self._feature_names):
       # Convert the VarLen feature to dense tensor.
@@ -330,10 +328,12 @@ class Parser(parser.Parser):
       min_quantized_value=-2,
   ):
     self._num_classes = input_params.num_classes
+    self._label_field = input_params.label_field
     self._segment_size = input_params.segment_size
     self._segment_labels = input_params.segment_labels
     self._include_video_id = input_params.include_video_id
     self._feature_names = input_params.feature_names
+    self._feature_sources = input_params.feature_sources
     self._feature_sizes = input_params.feature_sizes
     self._feature_dtypes = input_params.feature_dtypes
     self._max_frames = input_params.max_frames
@@ -377,6 +377,8 @@ class Parser(parser.Parser):
     Returns:
       output: dictionary containing batch information
     """
+    if self._label_field and not self._segment_labels:
+      contexts["labels"] = contexts[self._label_field]
     output_dict = _process_segment_and_label(video_matrix, num_frames, contexts,
                                              self._segment_labels,
                                              self._segment_size,
@@ -397,6 +399,27 @@ class Parser(parser.Parser):
 
     def parse(decoded_tensors):
       """Parses the serialized example data."""
+
+      # Concatenate video features to all frames if there are both video-level
+      # (context) and frame-level (feature) features.
+      if "feature" in self._feature_sources:
+        # Take first frame feature matrix, any feature matrix should be fine
+        # since assume all frame features have same number of frames.
+        feature_idx = self._feature_sources.index("feature")
+        num_frames = tf.shape(
+            decoded_tensors[self._feature_names[feature_idx]]
+        )[0]
+        for feature_idx, feature_source in enumerate(self._feature_sources):
+          if feature_source == "context":
+            feature_name = self._feature_names[feature_idx]
+            context_tensor = tf.reshape(
+                decoded_tensors[feature_name],
+                shape=(1, self._feature_sizes[feature_idx]),
+            )
+            decoded_tensors[feature_name] = tf.tile(
+                context_tensor, [num_frames, 1]
+            )
+
       if is_training:
         return self._parse_train_data(decoded_tensors)
       else:

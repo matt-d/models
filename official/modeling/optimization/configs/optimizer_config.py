@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -220,8 +220,7 @@ class AdamWeightDecayExperimentalConfig(BaseOptimizerConfig):
 class LAMBConfig(BaseOptimizerConfig):
   """Configuration for LAMB optimizer.
 
-  The attributes for this class matches the arguments of
-  tensorflow_addons.optimizers.LAMB.
+  The attributes for this class matches the arguments of LAMB optimizer.
 
   Attributes:
     name: name of the optimizer.

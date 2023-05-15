@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -68,6 +68,10 @@ class TransformerScaffold(tf.keras.layers.Layer):
         "name": "feedforward" }.
     dropout_rate: Dropout probability for the post-attention and output dropout.
     attention_dropout_rate: Dropout probability for within the attention layer.
+    norm_first: Whether to normalize inputs to attention and intermediate
+        dense layers. If set False, output of attention and intermediate dense
+        layers is normalized.
+    norm_epsilon: Epsilon value to initialize normalization layers.
     kernel_initializer: Initializer for dense layer kernels.
     bias_initializer: Initializer for dense layer biases.
     kernel_regularizer: Regularizer for dense layer kernels.
@@ -88,6 +92,7 @@ class TransformerScaffold(tf.keras.layers.Layer):
                dropout_rate=0.0,
                attention_dropout_rate=0.0,
                norm_first=False,
+               norm_epsilon=1e-12,
                kernel_initializer="glorot_uniform",
                bias_initializer="zeros",
                kernel_regularizer=None,
@@ -106,6 +111,7 @@ class TransformerScaffold(tf.keras.layers.Layer):
     self._feedforward_cls = feedforward_cls
     self._feedforward_cfg = feedforward_cfg
     self._norm_first = norm_first
+    self._norm_epsilon = norm_epsilon
     self._num_heads = num_attention_heads
     self._inner_dim = inner_dim
     self._inner_activation = inner_activation
@@ -149,6 +155,12 @@ class TransformerScaffold(tf.keras.layers.Layer):
     def get_layer_instance(instance_or_cls, config, default_config):
       if isinstance(instance_or_cls, tf.keras.layers.Layer):
         return instance_or_cls
+      elif isinstance(instance_or_cls, dict):
+        return get_layer_instance(
+            tf.keras.utils.deserialize_keras_object(instance_or_cls),
+            config,
+            default_config,
+        )
       else:
         if config is None:
           return instance_or_cls(**default_config)
@@ -201,7 +213,7 @@ class TransformerScaffold(tf.keras.layers.Layer):
         tf.keras.layers.LayerNormalization(
             name="self_attention_layer_norm",
             axis=-1,
-            epsilon=1e-12,
+            epsilon=self._norm_epsilon,
             dtype=tf.float32))
 
     if self._feedforward_block is None:
@@ -235,43 +247,46 @@ class TransformerScaffold(tf.keras.layers.Layer):
     self._output_dropout = tf.keras.layers.Dropout(rate=self._dropout_rate)
     # Use float32 in layernorm for numeric stability.
     self._output_layer_norm = tf.keras.layers.LayerNormalization(
-        name="output_layer_norm", axis=-1, epsilon=1e-12, dtype=tf.float32)
+        name="output_layer_norm",
+        axis=-1,
+        epsilon=self._norm_epsilon,
+        dtype=tf.float32)
 
     super().build(input_shape)
     logging.info("%s configs: %s", self.__class__.__name__, self.get_config())
 
   def get_config(self):
     config = {
-        "attention_cls":
-            self._attention_layer,
-        "feedforward_cls":
-            self._feedforward_block,
-        "num_attention_heads":
-            self._num_heads,
-        "inner_dim":
-            self._inner_dim,
-        "inner_activation":
-            self._inner_activation,
-        "dropout_rate":
-            self._dropout_rate,
-        "attention_dropout_rate":
-            self._attention_dropout_rate,
-        "norm_first":
-            self._norm_first,
-        "kernel_initializer":
-            tf.keras.initializers.serialize(self._kernel_initializer),
-        "bias_initializer":
-            tf.keras.initializers.serialize(self._bias_initializer),
-        "kernel_regularizer":
-            tf.keras.regularizers.serialize(self._kernel_regularizer),
-        "bias_regularizer":
-            tf.keras.regularizers.serialize(self._bias_regularizer),
-        "activity_regularizer":
-            tf.keras.regularizers.serialize(self._activity_regularizer),
-        "kernel_constraint":
-            tf.keras.constraints.serialize(self._kernel_constraint),
-        "bias_constraint":
-            tf.keras.constraints.serialize(self._bias_constraint)
+        "attention_cls": self._attention_layer,
+        "feedforward_cls": self._feedforward_block,
+        "num_attention_heads": self._num_heads,
+        "inner_dim": self._inner_dim,
+        "inner_activation": self._inner_activation,
+        "dropout_rate": self._dropout_rate,
+        "attention_dropout_rate": self._attention_dropout_rate,
+        "norm_first": self._norm_first,
+        "norm_epsilon": self._norm_epsilon,
+        "kernel_initializer": tf_utils.serialize_initializer(
+            self._kernel_initializer, use_legacy_format=True
+        ),
+        "bias_initializer": tf_utils.serialize_initializer(
+            self._bias_initializer, use_legacy_format=True
+        ),
+        "kernel_regularizer": tf_utils.serialize_regularizer(
+            self._kernel_regularizer, use_legacy_format=True
+        ),
+        "bias_regularizer": tf_utils.serialize_regularizer(
+            self._bias_regularizer, use_legacy_format=True
+        ),
+        "activity_regularizer": tf_utils.serialize_regularizer(
+            self._activity_regularizer, use_legacy_format=True
+        ),
+        "kernel_constraint": tf_utils.serialize_constraint(
+            self._kernel_constraint, use_legacy_format=True
+        ),
+        "bias_constraint": tf_utils.serialize_constraint(
+            self._bias_constraint, use_legacy_format=True
+        ),
     }
     base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
@@ -335,7 +350,9 @@ class TransformerScaffold(tf.keras.layers.Layer):
                                                training=training)
         layer_output += source_attention_output
       else:
-        # if not norm_first, assume that the feedforwad does apply layer norm
+        # Attention: if not norm_first, assume that the feedforwad does apply
+        # layer norm. The feedford also apply residual connection. Please
+        # read  the `GatedFeedforward` as a concrete example.
         layer_output = self._feedforward_block(attention_output,
                                                training=training)
 

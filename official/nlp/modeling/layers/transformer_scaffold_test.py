@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 import numpy as np
 import tensorflow as tf
 
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.nlp.modeling.layers import attention
 from official.nlp.modeling.layers import transformer_scaffold
 
@@ -57,7 +56,7 @@ class ValidatedFeedforwardLayer(tf.keras.layers.Layer):
     self.activation = activation
 
   def build(self, input_shape):
-    hidden_size = input_shape.as_list()[-1]
+    hidden_size = input_shape[-1]
     self._feedforward_dense = tf.keras.layers.EinsumDense(
         '...x,xy->...y',
         output_shape=hidden_size,
@@ -76,10 +75,7 @@ class ValidatedFeedforwardLayer(tf.keras.layers.Layer):
     return config
 
 
-# This decorator runs the test in V1, V2-Eager, and V2-Functional mode. It
-# guarantees forward compatibility of this code for the V2 switchover.
-@keras_parameterized.run_all_keras_modes
-class TransformerLayerTest(keras_parameterized.TestCase):
+class TransformerLayerTest(tf.test.TestCase):
 
   def tearDown(self):
     super(TransformerLayerTest, self).tearDown()

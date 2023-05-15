@@ -16,7 +16,7 @@ cc_library(
     hdrs = ["projection_normalizer_util.h"],
     deps = [
         ":projection_util",
-        "@utf_archive//:utf",
+        "@icu4c",
     ],
 )
 
@@ -26,7 +26,6 @@ cc_library(
     hdrs = ["projection_tokenizer_util.h"],
     deps = [
         ":projection_util",
-        "@utf_archive//:utf",
     ],
 )
 
@@ -35,7 +34,7 @@ cc_library(
     srcs = ["projection_util.cc"],
     hdrs = ["projection_util.h"],
     deps = [
-        "@utf_archive//:utf",
+        "@icu4c",
     ],
 )
 
@@ -47,7 +46,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
-        "@icu4c//:icu4c",
+        "@icu4c",
     ],
 )
 
@@ -58,7 +57,7 @@ cc_test(
         ":skipgram_finder",
         "@com_google_absl//absl/strings",
 	"@com_google_googletest//:gtest_main",
-        "@icu4c//:icu4c",
+        "@icu4c",
     ],
 )
 
@@ -70,7 +69,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
-        "@icu4c//:icu4c",
+        "@icu4c",
     ],
 )
 
@@ -103,6 +102,7 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@tensorflow_includes//:includes",
         "@tensorflow_solib//:framework_lib",
     ],
@@ -137,6 +137,7 @@ cc_library(
         ":projection_util",
         ":text_distorter",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@tensorflow_includes//:includes",
         "@tensorflow_solib//:framework_lib",
     ],
@@ -149,6 +150,8 @@ cc_test(
     srcs = ["sequence_string_projection_test.cc"],
     deps = [
         ":sequence_string_projection_op",
+        "@org_tensorflow//tensorflow/core:test",
+        "@org_tensorflow//tensorflow/core:testlib",
         "@tensorflow_includes//:includes",
         "@tensorflow_solib//:framework_lib",
     ],
@@ -169,9 +172,10 @@ cc_library(
         ":projection_normalizer_util",
         ":projection_util",
         ":text_distorter",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@tensorflow_includes//:includes",
         "@tensorflow_solib//:framework_lib",
-        "@com_google_absl//absl/container:flat_hash_map",
     ],
     alwayslink = 1,
 )
@@ -182,6 +186,8 @@ cc_test(
     srcs = ["sequence_string_projection_op_v2_test.cc"],
     deps = [
         ":sequence_string_projection_op_v2",
+        "@org_tensorflow//tensorflow/core:test",
+        "@org_tensorflow//tensorflow/core:testlib",
         "@tensorflow_includes//:includes",
         "@tensorflow_solib//:framework_lib",
     ],

@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ class FooTrainTest(tf.test.TestCase):
 ```
 
 """
-from typing import Sequence, Union
+from typing import Mapping, Optional, Sequence, Union
 
 import numpy as np
 import tensorflow as tf
@@ -150,8 +150,8 @@ def create_classification_example(
                                                       int(is_multilabel) +
                                                       1).tolist()
   builder = tf_example_builder.TfExampleBuilder()
-  example = builder.add_image_matrix_feature(image,
-                                             image_format).add_ints_feature(
+  example = builder.add_image_matrix_feature(image, image_format,
+                                             DUMP_SOURCE_ID).add_ints_feature(
                                                  CLASSIFICATION_LABEL_KEY,
                                                  labels).example
   if output_serialized_example:
@@ -183,8 +183,8 @@ def create_distillation_example(
   soft_labels = (fake_feature_generator.generate_classes_np(1, num_labels) +
                  0.6).tolist()
   builder = tf_example_builder.TfExampleBuilder()
-  example = builder.add_image_matrix_feature(image,
-                                             image_format).add_ints_feature(
+  example = builder.add_image_matrix_feature(image, image_format,
+                                             DUMP_SOURCE_ID).add_ints_feature(
                                                  CLASSIFICATION_LABEL_KEY,
                                                  labels).add_floats_feature(
                                                      DISTILLATION_LABEL_KEY,
@@ -266,12 +266,13 @@ def create_detection_test_example(
 
   builder = tf_example_builder.TfExampleBuilder()
 
-  example = builder.add_image_matrix_feature(image).add_boxes_feature(
-      xmins, xmaxs, ymins, ymaxs,
-      labels).add_instance_mask_matrices_feature(masks).add_ints_feature(
-          'image/object/is_crowd',
-          is_crowds).add_bytes_feature('image/object/class/text',
-                                       labels_text).example
+  example = builder.add_image_matrix_feature(
+      image, image_source_id=DUMP_SOURCE_ID).add_boxes_feature(
+          xmins, xmaxs, ymins, ymaxs,
+          labels).add_instance_mask_matrices_feature(masks).add_ints_feature(
+              'image/object/is_crowd',
+              is_crowds).add_bytes_feature('image/object/class/text',
+                                           labels_text).example
   if not fill_image_size:
     del example.features.feature['image/height']
     del example.features.feature['image/width']
@@ -285,7 +286,8 @@ def create_segmentation_test_example(
     image_height: int,
     image_width: int,
     image_channel: int,
-    output_serialized_example: bool = False) -> tf.train.Example:
+    output_serialized_example: bool = False,
+    dense_features: Optional[Mapping[str, int]] = None) -> tf.train.Example:
   """Creates and returns a test example containing mask annotations.
 
   Args:
@@ -294,7 +296,9 @@ def create_segmentation_test_example(
     image_channel: The channel of test image.
     output_serialized_example: A boolean flag represents whether to return a
       serialized example.
-
+    dense_features: An optional dictionary of additional dense features, where
+      the key is the prefix of the feature key in tf.Example and the value is
+      the number of the channels of this feature.
   Returns:
     A tf.train.Example for testing.
   """
@@ -303,8 +307,19 @@ def create_segmentation_test_example(
   mask = fake_feature_generator.generate_semantic_mask_np(
       image_height, image_width, 3)
   builder = tf_example_builder.TfExampleBuilder()
-  example = builder.add_image_matrix_feature(
-      image).add_semantic_mask_matrix_feature(mask).example
+  builder.add_image_matrix_feature(
+      image,
+      image_source_id=DUMP_SOURCE_ID).add_semantic_mask_matrix_feature(mask)
+
+  if dense_features:
+    for prefix, channel in dense_features.items():
+      dense_feature = fake_feature_generator.generate_semantic_mask_np(
+          image_height, image_width, channel)
+      builder.add_semantic_mask_matrix_feature(
+          dense_feature, feature_prefix=prefix)
+
+  example = builder.example
+
   if output_serialized_example:
     return example.SerializeToString()
   return example

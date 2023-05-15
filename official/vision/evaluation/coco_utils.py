@@ -1,4 +1,4 @@
-# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ class COCOWrapper(coco.COCO):
   This class wraps COCO API object, which provides the following additional
   functionalities:
     1. Support string type image id.
-    2. Support loading the groundtruth dataset using the external annotation
+    2. Support loading the ground-truth dataset using the external annotation
        dictionary.
     3. Support loading the prediction results using the external annotation
        dictionary.
@@ -52,7 +52,7 @@ class COCOWrapper(coco.COCO):
       eval_type: either 'box' or 'mask'.
       annotation_file: a JSON file that stores annotations of the eval dataset.
         This is required if `gt_dataset` is not provided.
-      gt_dataset: the groundtruth eval datatset in COCO API format.
+      gt_dataset: the ground-truth eval datatset in COCO API format.
     """
     if ((annotation_file and gt_dataset) or
         ((not annotation_file) and (not gt_dataset))):
@@ -81,7 +81,7 @@ class COCOWrapper(coco.COCO):
 
     Raises:
       ValueError: if the set of image id from predctions is not the subset of
-        the set of image id of the groundtruth dataset.
+        the set of image id of the ground-truth dataset.
     """
     res = coco.COCO()
     res.dataset['images'] = copy.deepcopy(self.dataset['images'])
@@ -110,7 +110,7 @@ def convert_predictions_to_coco_annotations(predictions):
 
   Args:
     predictions: a dictionary of lists of numpy arrays including the following
-      fields. K below denotes the maximum number of instances per image.
+      fields. 'K' below denotes the maximum number of instances per image.
       Required fields:
         - source_id: a list of numpy arrays of int or string of shape
             [batch_size].
@@ -163,6 +163,22 @@ def convert_predictions_to_coco_annotations(predictions):
         ann['score'] = predictions['detection_scores'][i][j, k]
         if 'detection_masks' in predictions:
           ann['segmentation'] = encoded_masks[k]
+        if 'detection_keypoints' in predictions:
+          # Adds extra ones to indicate the visibility for each keypoint as is
+          # recommended by MSCOCO. Also, convert keypoint from [y, x] to [x, y]
+          # as mandated by COCO.
+          instance_keypoints = predictions['detection_keypoints'][i][j, k]
+          num_keypoints = len(instance_keypoints)
+          instance_keypoints = np.concatenate(
+              [
+                  np.expand_dims(instance_keypoints[:, 1], axis=-1),
+                  np.expand_dims(instance_keypoints[:, 0], axis=-1),
+                  np.expand_dims(np.ones(num_keypoints), axis=1),
+              ],
+              axis=1,
+          ).astype(int)
+          instance_keypoints = instance_keypoints.flatten().tolist()
+          ann['keypoints'] = instance_keypoints
         coco_predictions.append(ann)
 
   for i, ann in enumerate(coco_predictions):
@@ -172,12 +188,12 @@ def convert_predictions_to_coco_annotations(predictions):
 
 
 def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
-  """Converts groundtruths to the dataset in COCO format.
+  """Converts ground-truths to the dataset in COCO format.
 
   Args:
     groundtruths: a dictionary of numpy arrays including the fields below.
       Note that each element in the list represent the number for a single
-      example without batch dimension. K below denotes the actual number of
+      example without batch dimension. 'K' below denotes the actual number of
       instances for each image.
       Required fields:
         - source_id: a list of numpy arrays of int or string of shape
@@ -197,11 +213,11 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
             masks depending on which one is available.
         - masks: a list of numpy arrays of string of shape [batch_size, K],
     label_map: (optional) a dictionary that defines items from the category id
-      to the category name. If `None`, collect the category mappping from the
+      to the category name. If `None`, collect the category mapping from the
       `groundtruths`.
 
   Returns:
-    coco_groundtruths: the groundtruth dataset in COCO format.
+    coco_groundtruths: the ground-truth dataset in COCO format.
   """
   source_ids = np.concatenate(groundtruths['source_id'], axis=0)
   heights = np.concatenate(groundtruths['height'], axis=0)
@@ -212,8 +228,10 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
   gt_annotations = []
   num_batches = len(groundtruths['source_id'])
   for i in range(num_batches):
-    logging.info(
-        'convert_groundtruths_to_coco_dataset: Processing annotation %d', i)
+    logging.log_every_n(
+        logging.INFO,
+        'convert_groundtruths_to_coco_dataset: Processing annotation %d', 100,
+        i)
     max_num_instances = groundtruths['classes'][i].shape[1]
     batch_size = groundtruths['source_id'][i].shape[0]
     for j in range(batch_size):
@@ -247,17 +265,10 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
           if isinstance(groundtruths['masks'][i][j, k], tf.Tensor):
             mask = Image.open(
                 six.BytesIO(groundtruths['masks'][i][j, k].numpy()))
-            width, height = mask.size
-            np_mask = (
-                np.array(mask.getdata()).reshape(height,
-                                                 width).astype(np.uint8))
           else:
             mask = Image.open(
                 six.BytesIO(groundtruths['masks'][i][j, k]))
-            width, height = mask.size
-            np_mask = (
-                np.array(mask.getdata()).reshape(height,
-                                                 width).astype(np.uint8))
+          np_mask = np.array(mask, dtype=np.uint8)
           np_mask[np_mask > 0] = 255
           encoded_mask = mask_api.encode(np.asfortranarray(np_mask))
           ann['segmentation'] = encoded_mask
@@ -267,6 +278,25 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
                 ann['segmentation']['counts'])
           if 'areas' not in groundtruths:
             ann['area'] = mask_api.area(encoded_mask)
+        if 'keypoints' in groundtruths:
+          keypoints = groundtruths['keypoints'][i]
+          coco_keypoints = []
+          num_valid_keypoints = 0
+          for z in range(len(keypoints[j, k, :, 1])):
+            # Convert from [y, x] to [x, y] as mandated by COCO.
+            x = float(keypoints[j, k, z, 1])
+            y = float(keypoints[j, k, z, 0])
+            coco_keypoints.append(x)
+            coco_keypoints.append(y)
+            if tf.math.is_nan(x) or tf.math.is_nan(y) or (
+                x == 0 and y == 0):
+              visibility = 0
+            else:
+              visibility = 2
+              num_valid_keypoints = num_valid_keypoints + 1
+            coco_keypoints.append(visibility)
+          ann['keypoints'] = coco_keypoints
+          ann['num_keypoints'] = num_valid_keypoints
         gt_annotations.append(ann)
 
   for i, ann in enumerate(gt_annotations):
@@ -287,7 +317,7 @@ def convert_groundtruths_to_coco_dataset(groundtruths, label_map=None):
 
 
 class COCOGroundtruthGenerator:
-  """Generates the groundtruth annotations from a single example."""
+  """Generates the ground-truth annotations from a single example."""
 
   def __init__(self, file_pattern, file_type, num_examples, include_mask,
                regenerate_source_id=False):
@@ -304,11 +334,11 @@ class COCOGroundtruthGenerator:
       example: a serialized tf.Example proto string.
 
     Returns:
-      A dictionary of groundtruth with the following fields:
+      A dictionary of ground-truth with the following fields:
         source_id: a scalar tensor of int64 representing the image source_id.
         height: a scalar tensor of int64 representing the image height.
         width: a scalar tensor of int64 representing the image width.
-        boxes: a float tensor of shape [K, 4], representing the groundtruth
+        boxes: a float tensor of shape [K, 4], representing the ground-truth
           boxes in absolute coordinates with respect to the original image size.
         classes: a int64 tensor of shape [K], representing the class labels of
           each instances.
@@ -350,7 +380,7 @@ class COCOGroundtruthGenerator:
     return groundtruths
 
   def _build_pipeline(self):
-    """Builds data pipeline to generate groundtruth annotations."""
+    """Builds data pipeline to generate ground-truth annotations."""
     dataset = tf.data.Dataset.list_files(self._file_pattern, shuffle=False)
     dataset = dataset.interleave(
         map_func=lambda filename: self._dataset_fn(filename).prefetch(1),
@@ -382,11 +412,13 @@ def scan_and_generator_annotation_file(file_pattern: str,
 
 def generate_annotation_file(groundtruth_generator,
                              annotation_file):
-  """Generates COCO-style annotation JSON file given a groundtruth generator."""
+  """Generates COCO-style annotation JSON file given a ground-truth generator."""
   groundtruths = {}
   logging.info('Loading groundtruth annotations from dataset to memory...')
   for i, groundtruth in enumerate(groundtruth_generator()):
-    logging.info('generate_annotation_file: Processing annotation %d', i)
+    logging.log_every_n(logging.INFO,
+                        'generate_annotation_file: Processing annotation %d',
+                        100, i)
     for k, v in six.iteritems(groundtruth):
       if k not in groundtruths:
         groundtruths[k] = [v]
